@@ -20,10 +20,16 @@ Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and hu
 
 ## Hardware
 
-- **JeeLink v3 / v3c USB stick** flashed with the [LaCrosse firmware](https://svn.fhem.de/trac/browser/trunk/fhem/contrib/arduino) (the same one FHEM uses). Sticks bought as "FHEM JeeLink LaCrosse" are ready to go.
-- Sensors: LaCrosse/Technoline TX25, TX27, TX29 (IT+), TX35, TX37 and compatibles (30.3143, 30.3144, 30.3155, 30.3156, …).
+Any board running the **LaCrosseITPlusReader sketch** (the firmware FHEM uses) works:
 
-The integration initialises the stick with `7m` (868.3 MHz toggle off) and `10t` — the defaults proven in long-term FHEM operation.
+- **JeeLink v3 / v3c USB stick** — sticks sold as "FHEM JeeLink LaCrosse" are ready to go.
+- **DIY Arduino clone** (e.g. Nano with CH340 + RFM69/RFM12 module) flashed with the same [LaCrosse firmware](https://svn.fhem.de/trac/browser/trunk/fhem/contrib/arduino) — this is what the integration was developed and tested on.
+
+The serial handling covers both: 57600 baud (FHEM's default for this firmware), raw mode as a CH340 safety net, and a DTR reset that works on genuine JeeLinks (FTDI) and clones alike, since both wire DTR to the MCU reset for sketch uploads. Firmware quirks are handled identically to FHEM's `36_JeeLink.pm`: `drecvintr exit` and `RFM12 hang` trigger an automatic reset.
+
+Sensors: LaCrosse/Technoline TX25, TX27, TX29 (IT+), TX35, TX37 and compatibles (30.3143, 30.3144, 30.3155, 30.3156, …).
+
+On connect the integration sends the firmware commands `7m` (data-rate toggle mask 7 = cycle all three rates: 17.241 / 9.579 / 8.842 kbps) and `10t` (toggle every 10 s), so mixed sensor generations are received without manual rate tuning — equivalent to FHEM's `initCommands` attribute.
 
 ## Installation
 

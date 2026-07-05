@@ -175,12 +175,15 @@ class JeeLinkCoordinator:
         self._debug_cancel = None
         self._sensor_device_infos: dict[int, DeviceInfo] = {}
 
-        # Bridge-Device (fuer Reset-Button und Debug-Switch)
+        # Bridge-Device (fuer Reset-Button und Debug-Switch). Modell bewusst
+        # generisch: es zaehlt der LaCrosseITPlusReader-Sketch, nicht das
+        # Board - echter JeeLink v3/v3c und Arduino-Clones (CH340 + RFM69/
+        # RFM12) verhalten sich am seriellen Port identisch.
         self.device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name="LaCrosse JeeLink Bridge",
-            manufacturer="Jeelabs",
-            model="JeeLink v3",
+            manufacturer="JeeLabs / DIY",
+            model="JeeLink v3 / Arduino clone (LaCrosseITPlusReader)",
         )
 
     # ── Benachrichtigungen ─────────────────────────────────────────────────────
