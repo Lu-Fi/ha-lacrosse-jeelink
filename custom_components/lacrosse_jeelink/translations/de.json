@@ -1,0 +1,103 @@
+{
+  "title": "LaCrosse JeeLink Bridge",
+  "config": {
+    "step": {
+      "user": {
+        "title": "LaCrosse JeeLink Bridge",
+        "description": "Serielle Verbindung zum JeeLink USB-Stick konfigurieren.",
+        "data": {
+          "serial_port": "Serieller Port",
+          "auto_add_entities": "Sensoren automatisch erkennen",
+          "outlier_confirm_count": "Ausreißer-Bestätigung"
+        },
+        "data_description": {
+          "serial_port": "Seriellen Port des JeeLink USB-Sticks auswählen oder manuell eingeben.",
+          "auto_add_entities": "Neue Sensoren automatisch hinzufügen, sobald erstmals ein Paket empfangen wird.",
+          "outlier_confirm_count": "Wie oft muss derselbe Ausreißer-Wert hintereinander gemeldet werden, bevor er als gültig akzeptiert wird (2–20). Verhindert fehlerhafte Sprünge bei Einzelmessungen."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Dieser serielle Port ist bereits konfiguriert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "JeeLink-Einstellungen",
+        "data": {
+          "serial_port": "Serieller Port",
+          "auto_add_entities": "Sensoren automatisch erkennen",
+          "outlier_confirm_count": "Ausreißer-Bestätigung",
+          "serial_timeout": "Serielles Lese-Timeout (Sekunden)",
+          "reconnect_delay": "Wartezeit vor Reconnect nach Fehler (Sekunden)",
+          "battery_replace_timeout": "Zeitfenster für Batteriewechsel (Sekunden)",
+          "debug_timeout": "Debug-Modus automatisch aus nach (Sekunden)",
+          "notify_enabled": "Benachrichtigungen senden",
+          "notify_entity": "Notify-Entity für Meldungen",
+          "data_timeout": "Funkstille-Warnung nach (Minuten, 0 = aus)",
+          "notify_connection": "Meldung: Verbindung verloren/wiederhergestellt",
+          "notify_data_timeout": "Meldung: Funkstille / Daten wieder da",
+          "notify_new_sensor": "Meldung: neuer Sensor erkannt",
+          "notify_battery_low": "Meldung: Batterie schwach",
+          "notify_battery_replaced": "Meldung: Batteriewechsel erkannt",
+          "stale_cleanup_hours": "Stumme Sensoren automatisch entfernen nach (Stunden, 0 = aus)"
+        },
+        "data_description": {
+          "outlier_confirm_count": "Wie oft derselbe Ausreißer-Wert hintereinander gemeldet werden muss, bevor er als gültig akzeptiert wird (2–20).",
+          "serial_timeout": "Blockierendes Lese-Timeout am seriellen Port. Standard 1 s — nur zur Fehlersuche ändern.",
+          "reconnect_delay": "Wartezeit vor einem Reconnect nach einem seriellen Fehler (1–600 s).",
+          "battery_replace_timeout": "So lange bleibt der Batteriewechsel-Modus nach Knopfdruck aktiv. Standard 120 s.",
+          "debug_timeout": "Das Debug-Logging schaltet sich nach dieser Zeit selbst ab. Standard 300 s.",
+          "notify_enabled": "Hauptschalter für alle Meldungen (Verbindung verloren/wiederhergestellt, neuer Sensor, Batterie schwach, Batteriewechsel erkannt).",
+          "notify_entity": "Ziel-notify.*-Entity (Telegram, App-Push, …). Leer = keine Meldungen.",
+          "data_timeout": "Warnt, wenn trotz bestehender serieller Verbindung so lange kein Funkpaket mehr geparst wurde (stiller Firmware-Hänger, Antennenproblem). Bei wieder eintreffenden Daten kommt eine Entwarnung. 0 schaltet den Watchdog ab.",
+          "stale_cleanup_hours": "Entfernt automatisch erkannte Sensoren, die so lange keine Daten mehr gesendet haben — z. B. den Nachbar-Sensor, der kurz in den Empfang gefunkt hat. Entfernt werden nur unangetastete Sensoren: Umbenennen des Geräts oder einer Entity, Raum-Zuordnung oder Labels schützen einen Sensor dauerhaft (er behält seine Entities und den Batteriewechsel-Button auch mit leerer Batterie)."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Temperatur"
+      },
+      "temperature2": {
+        "name": "Temperatur2"
+      },
+      "humidity": {
+        "name": "Luftfeuchte"
+      },
+      "dewpoint": {
+        "name": "Taupunkt"
+      },
+      "last_seen": {
+        "name": "Zuletzt empfangen"
+      }
+    },
+    "binary_sensor": {
+      "battery": {
+        "name": "Batterie"
+      },
+      "connected": {
+        "name": "Verbunden"
+      },
+      "radio_silence": {
+        "name": "Funkstille"
+      }
+    },
+    "button": {
+      "reset": {
+        "name": "Stick-Reset"
+      },
+      "battery_replace": {
+        "name": "Batterie gewechselt"
+      }
+    },
+    "switch": {
+      "debug": {
+        "name": "Debug-Modus"
+      }
+    }
+  }
+}
