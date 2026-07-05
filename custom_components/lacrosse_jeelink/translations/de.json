@@ -41,7 +41,8 @@
           "notify_new_sensor": "Meldung: neuer Sensor erkannt",
           "notify_battery_low": "Meldung: Batterie schwach",
           "notify_battery_replaced": "Meldung: Batteriewechsel erkannt",
-          "stale_cleanup_hours": "Stumme Sensoren automatisch entfernen nach (Stunden, 0 = aus)"
+          "stale_cleanup_hours": "Stumme Sensoren automatisch entfernen nach (Stunden, 0 = aus)",
+          "init_commands": "Firmware-Init-Kommandos"
         },
         "data_description": {
           "outlier_confirm_count": "Wie oft derselbe Ausreißer-Wert hintereinander gemeldet werden muss, bevor er als gültig akzeptiert wird (2–20).",
@@ -52,7 +53,8 @@
           "notify_enabled": "Hauptschalter für alle Meldungen (Verbindung verloren/wiederhergestellt, neuer Sensor, Batterie schwach, Batteriewechsel erkannt).",
           "notify_entity": "Ziel-notify.*-Entity (Telegram, App-Push, …). Leer = keine Meldungen.",
           "data_timeout": "Warnt, wenn trotz bestehender serieller Verbindung so lange kein Funkpaket mehr geparst wurde (stiller Firmware-Hänger, Antennenproblem). Bei wieder eintreffenden Daten kommt eine Entwarnung. 0 schaltet den Watchdog ab.",
-          "stale_cleanup_hours": "Entfernt automatisch erkannte Sensoren, die so lange keine Daten mehr gesendet haben — z. B. den Nachbar-Sensor, der kurz in den Empfang gefunkt hat. Entfernt werden nur unangetastete Sensoren: Umbenennen des Geräts oder einer Entity, Raum-Zuordnung oder Labels schützen einen Sensor dauerhaft (er behält seine Entities und den Batteriewechsel-Button auch mit leerer Batterie)."
+          "stale_cleanup_hours": "Entfernt automatisch erkannte Sensoren, die so lange keine Daten mehr gesendet haben — z. B. den Nachbar-Sensor, der kurz in den Empfang gefunkt hat. Entfernt werden nur unangetastete Sensoren: Umbenennen des Geräts oder einer Entity, Raum-Zuordnung oder Labels schützen einen Sensor dauerhaft (er behält seine Entities und den Batteriewechsel-Button auch mit leerer Batterie).",
+          "init_commands": "Kommandos (durch Leerzeichen getrennt), die bei jedem Verbinden an den Sketch gehen (wie FHEMs initCommands). Standard '7m 10t' = alle drei Datenraten im 10-s-Wechsel. Beispiel für feste Rate: '0m' plus '17241r'."
         }
       }
     }

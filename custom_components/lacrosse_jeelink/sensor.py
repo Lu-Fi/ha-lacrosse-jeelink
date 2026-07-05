@@ -1,4 +1,4 @@
-"""Temperature, humidity, dewpoint and last-seen sensors — dynamically discovered."""
+"""Temperature, humidity, dew point and last-seen sensors - dynamically discovered."""
 from __future__ import annotations
 
 import datetime
@@ -33,7 +33,7 @@ async def async_setup_entry(
                 entities.append(LaCrosseTempSensor(coordinator, entry, disc.sensor_id, disc.channel))
             elif disc.channel == "humidity":
                 entities.append(LaCrosseHumSensor(coordinator, entry, disc.sensor_id))
-                # Taupunkt: berechnet wie FHEM doDewpoint (Magnus-Formel)
+                # Dew point: calculated like FHEM doDewpoint (Magnus formula)
                 entities.append(LaCrosseDewpointSensor(coordinator, entry, disc.sensor_id))
             elif disc.channel == "last_seen":
                 entities.append(LaCrosseLastSeenSensor(coordinator, entry, disc.sensor_id))
@@ -42,18 +42,19 @@ async def async_setup_entry(
 
     coordinator.register_discovery_callback(_on_discovery)
 
-    # Hinweis: Das Vorladen bekannter Sensoren aus der Entity-Registry
-    # passiert zentral in __init__.py (coordinator.preload_from_registry())
-    # fuer ALLE Plattformen - inklusive Batterie-Sensor und Batteriewechsel-
-    # Button, die frueher nach einem Neustart bis zum ersten Paket fehlten.
-    # RestoreSensor laedt die letzten Werte weiterhin in async_added_to_hass.
+    # Note: preloading known sensors from the entity registry happens
+    # centrally in __init__.py (coordinator.preload_from_registry()) for
+    # ALL platforms - including the battery sensor and battery-replaced
+    # button, which previously were missing after a restart until the
+    # first packet. RestoreSensor still loads the last values in
+    # async_added_to_hass.
 
 
 class _LaCrosseBase(RestoreSensor):
-    """Gemeinsame Basis fuer alle LaCrosse-Sensor-Entities."""
+    """Common base for all LaCrosse sensor entities."""
 
     _attr_should_poll = False
-    _attr_has_entity_name = True  # Name = Gerätename + Entity-Name (z.B. "Terrasse Temperatur")
+    _attr_has_entity_name = True  # name = device name + entity name (e.g. "Terrasse Temperature")
 
     def __init__(
         self,
@@ -82,7 +83,7 @@ class _LaCrosseBase(RestoreSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        # Letzten Wert aus der DB wiederherstellen, falls noch kein Live-Wert vorliegt
+        # Restore the last value from the DB if no live value exists yet
         if self._state_key not in self._coordinator.sensor_states:
             last_data = await self.async_get_last_sensor_data()
             if last_data is not None and last_data.native_value is not None:
@@ -130,12 +131,12 @@ class LaCrosseHumSensor(_LaCrosseBase):
 
 
 class LaCrosseLastSeenSensor(_LaCrosseBase):
-    """Zeitpunkt des zuletzt empfangenen Funkpakets dieses Sensors.
+    """Timestamp of the last received radio packet of this sensor.
 
-    Zaehlt jedes geparste Paket - auch wenn der Messwert vom Ausreisser-
-    Filter verworfen wurde. Minutengenau (bewusst quantisiert, um die
-    Datenbank nicht mit jedem 4-Sekunden-Paket zu fuellen). Praktisch, um
-    tote Sensoren (leere Batterie, Funkloch) per Automation zu erkennen.
+    Counts every parsed packet - even if the reading was rejected by the
+    outlier filter. Minute resolution (deliberately quantised so the
+    database is not flooded by every 4-second packet). Handy for spotting
+    dead sensors (empty battery, radio dead spot) in automations.
     """
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
@@ -154,8 +155,8 @@ class LaCrosseLastSeenSensor(_LaCrosseBase):
         val = self._coordinator.sensor_states.get(self._state_key)
         if val is None:
             return None
-        # Live-Wert: Epoch-Sekunden (aus dem Reader-Thread). Nach Restore
-        # kann auch ein datetime (oder ISO-String) im Cache liegen.
+        # Live value: epoch seconds (from the reader thread). After a
+        # restore the cache may also hold a datetime (or an ISO string).
         if isinstance(val, (int, float)):
             return dt_util.utc_from_timestamp(val)
         if isinstance(val, datetime.datetime):
@@ -166,7 +167,7 @@ class LaCrosseLastSeenSensor(_LaCrosseBase):
 
 
 class LaCrosseDewpointSensor(_LaCrosseBase):
-    """Taupunkt-Berechnung - identisch zur FHEM-Funktion LaCrosse_CalcDewpoint."""
+    """Dew point calculation - identical to FHEM's LaCrosse_CalcDewpoint."""
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT

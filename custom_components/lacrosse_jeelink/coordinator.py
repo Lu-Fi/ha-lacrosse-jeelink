@@ -3,14 +3,14 @@
 Protocol reference: FHEM 36_LaCrosse.pm
 
 OK 9 format byte layout (parts[2..6]):
-  parts[2]  Sensor-ID
-  parts[3]  Flags:
+  parts[2]  sensor ID
+  parts[3]  flags:
               bit 7 (0x80) = new battery inserted
               bits 4-6 (0x70) = sensor type
               bits 0-3 (0x0F) = channel  (1 = main, 2 = probe2/external)
-  parts[4]  Temperature MSB  }  temp = (MSB*256 + LSB - 1000) / 10.0
-  parts[5]  Temperature LSB  }
-  parts[6]  Humidity byte:
+  parts[4]  temperature MSB  }  temp = (MSB*256 + LSB - 1000) / 10.0
+  parts[5]  temperature LSB  }
+  parts[6]  humidity byte:
               bit 7 (0x80) = weak/low battery
               bits 0-6 (0x7F) = humidity value (0-100, valid: 1-100)
                   > 100 after masking = no humidity sensor (e.g. 106 = temperature-only)
@@ -43,6 +43,7 @@ from .const import (
     CONF_BATTERY_REPLACE_TIMEOUT,
     CONF_DATA_TIMEOUT,
     CONF_DEBUG_TIMEOUT,
+    CONF_INIT_COMMANDS,
     CONF_NOTIFY_BATTERY_LOW,
     CONF_NOTIFY_BATTERY_REPLACED,
     CONF_NOTIFY_CONNECTION,
@@ -55,6 +56,7 @@ from .const import (
     CONF_SERIAL_TIMEOUT,
     CONF_STALE_CLEANUP_HOURS,
     DEFAULT_DATA_TIMEOUT,
+    DEFAULT_INIT_COMMANDS,
     DEFAULT_STALE_CLEANUP_HOURS,
     DEFAULT_BATTERY_REPLACE_TIMEOUT,
     DEFAULT_DEBUG_TIMEOUT,
@@ -71,10 +73,10 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-# ── Taupunkt (Magnus-Formel, identisch zu FHEM LaCrosse_CalcDewpoint) ─────────
+# ── Dew point (Magnus formula, identical to FHEM LaCrosse_CalcDewpoint) ───────
 
 def _dewpoint(temp: float, hum: float) -> float:
-    """Magnus-Formel. Gleiche Koeffizienten wie in 36_LaCrosse.pm."""
+    """Magnus formula. Same coefficients as in 36_LaCrosse.pm."""
     a, b = (7.5, 237.3) if temp >= 0 else (7.6, 240.7)
     sdd = 6.1078 * 10 ** ((a * temp) / (b + temp))
     dd  = hum / 100 * sdd
@@ -84,20 +86,20 @@ def _dewpoint(temp: float, hum: float) -> float:
 
 @dataclass
 class SensorDiscovery:
-    """Beschreibt einen neu entdeckten Sensor-Kanal."""
+    """Describes a newly discovered sensor channel."""
     sensor_id: int
-    channel: str   # "temperature" | "temperature2" | "humidity" | "battery"
+    channel: str   # "temperature" | "temperature2" | "humidity" | "battery" | ...
 
 
 class JeeLinkCoordinator:
-    """Verwaltet die serielle JeeLink-Verbindung und verteilt Sensor-Updates."""
+    """Manages the serial JeeLink connection and distributes sensor updates."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
 
         def _opt(key: str, default):
-            """Option mit Fallback auf entry.data (aeltere Installationen)."""
+            """Option with fallback to entry.data (older installations)."""
             return entry.options.get(key, entry.data.get(key, default))
 
         self.serial_port: str = _opt(CONF_SERIAL_PORT, entry.data[CONF_SERIAL_PORT])
@@ -105,16 +107,23 @@ class JeeLinkCoordinator:
         self.outlier_confirm_count: int = int(
             _opt(CONF_OUTLIER_CONFIRM_COUNT, OUTLIER_CONFIRM_COUNT)
         )
-        # Konfigurierbare Timeouts (Options-Flow)
+        # Configurable timeouts (options flow)
         self.serial_timeout: float = float(_opt(CONF_SERIAL_TIMEOUT, DEFAULT_SERIAL_TIMEOUT))
         self.reconnect_delay: int = int(_opt(CONF_RECONNECT_DELAY, DEFAULT_RECONNECT_DELAY))
         self.battery_replace_timeout: int = int(
             _opt(CONF_BATTERY_REPLACE_TIMEOUT, DEFAULT_BATTERY_REPLACE_TIMEOUT)
         )
         self.debug_timeout: int = int(_opt(CONF_DEBUG_TIMEOUT, DEFAULT_DEBUG_TIMEOUT))
-        # Benachrichtigungen (Options-Flow): beliebige notify-Entity,
-        # leer = keine Meldungen. notify_enabled ist der Hauptschalter,
-        # jeder Meldungstyp ist zusaetzlich einzeln schaltbar.
+        # Firmware init commands (space-separated, sent on every connect and
+        # after firmware-hang resets; equivalent to FHEM's initCommands
+        # attribute). Default "7m 10t" = cycle all three data rates every
+        # 10 s so mixed sensor generations are received.
+        self.init_commands: str = str(
+            _opt(CONF_INIT_COMMANDS, DEFAULT_INIT_COMMANDS)
+        ).strip() or DEFAULT_INIT_COMMANDS
+        # Notifications (options flow): any notify entity, empty = no
+        # messages. notify_enabled is the master switch; each message type
+        # can additionally be toggled individually.
         self.notify_enabled: bool = bool(_opt(CONF_NOTIFY_ENABLED, True))
         self.notify_entity: str = _opt(CONF_NOTIFY_ENTITY, DEFAULT_NOTIFY_ENTITY)
         self.notify_types: dict[str, bool] = {
@@ -124,27 +133,28 @@ class JeeLinkCoordinator:
             "battery_low": bool(_opt(CONF_NOTIFY_BATTERY_LOW, True)),
             "battery_replaced": bool(_opt(CONF_NOTIFY_BATTERY_REPLACED, True)),
         }
-        # Funkstille-Watchdog (Minuten, 0 = aus)
+        # Radio-silence watchdog (minutes, 0 = off)
         self.data_timeout_min: int = int(_opt(CONF_DATA_TIMEOUT, DEFAULT_DATA_TIMEOUT))
         self.last_data_ts: float = 0.0
         self._data_timeout_notified = False
         self._unsub_watchdog = None
-        # Automatisches Aufräumen verwaister Auto-Sensoren (Stunden, 0 = aus)
+        # Automatic cleanup of stray auto-discovered sensors (hours, 0 = off)
         self.stale_cleanup_hours: int = int(
             _opt(CONF_STALE_CLEANUP_HOURS, DEFAULT_STALE_CLEANUP_HOURS)
         )
         self._last_stale_check = 0.0
 
         self.debug: bool = False
-        # Firmware-Kennung des Sticks (Banner-Zeile des LaCrosseITPlusReader-
-        # Sketches, z.B. "LaCrosseITPlusReader.10.1s (RFM69 f:868300 r:17241)").
-        # Kommt nach jedem Reset automatisch und auf das "v"-Kommando; wird
-        # als sw_version am Bridge-Geraet hinterlegt (wie FHEMs model/settings).
+        # Firmware identification of the stick (banner line of the
+        # LaCrosseITPlusReader sketch, e.g. "LaCrosseITPlusReader.10.1s
+        # (RFM69 f:868300 r:17241)"). Emitted after every reset and on the
+        # "v" command; stored as sw_version on the bridge device (analogous
+        # to FHEM's model/settings internals).
         self.firmware: str | None = None
-        # Verbindungsstatus fuer connected-Binary-Sensor + Benachrichtigungen
+        # Connection state for the connected binary sensor + notifications
         self.connected: bool = False
         self._conn_notified_down = False
-        # Batterie-Status-Cache fuer "Batterie schwach"-Benachrichtigung
+        # Battery state cache for the "battery low" notification
         self._battery_notified: set[int] = set()
 
         # sensor_id -> set of channels already created as entities
@@ -153,24 +163,24 @@ class JeeLinkCoordinator:
         # (sensor_id, channel) -> current value
         self.sensor_states: dict[tuple[int, str], object] = {}
 
-        # Cache fuer Ausreisser-Pruefung
+        # Cache for outlier checking
         self._cache: dict[tuple[int, str], object] = {}
 
-        # Ausreisser-Bestaetigung: key -> (wert, anzahl_aufeinanderfolgend)
+        # Outlier confirmation: key -> (value, consecutive_count)
         self._outlier_counter: dict[tuple, tuple] = {}
 
         self._state_listeners: list = []
         self._discovery_callbacks: list = []
 
-        # Batteriewechsel: new_id -> old_id (Alias nach ID-Wechsel)
+        # Battery replacement: new_id -> old_id (alias after ID change)
         self._id_aliases: dict[int, int] = {}
-        # Batteriewechsel-Modus aktiv: old_id -> Ablauf-Timestamp
+        # Battery replacement mode active: old_id -> expiry timestamp
         self._replace_battery: dict[int, float] = {}
 
         self._entry_id = entry.entry_id
-        # Persistenz der ID-Aliase (Batteriewechsel): Ohne Store waere die
-        # Zuordnung "neue Funk-ID -> alter Sensor" nach einem HA-Neustart
-        # verloren und die neue ID wuerde als NEUER Sensor angelegt.
+        # Persistence of the ID aliases (battery replacement): without the
+        # store, the "new radio ID -> old sensor" mapping would be lost on
+        # an HA restart and the new ID would be created as a NEW sensor.
         self._alias_store: Store = Store(
             hass, 1, f"{DOMAIN}_{entry.entry_id}_aliases"
         )
@@ -180,10 +190,10 @@ class JeeLinkCoordinator:
         self._debug_cancel = None
         self._sensor_device_infos: dict[int, DeviceInfo] = {}
 
-        # Bridge-Device (fuer Reset-Button und Debug-Switch). Modell bewusst
-        # generisch: es zaehlt der LaCrosseITPlusReader-Sketch, nicht das
-        # Board - echter JeeLink v3/v3c und Arduino-Clones (CH340 + RFM69/
-        # RFM12) verhalten sich am seriellen Port identisch.
+        # Bridge device (for the reset button and debug switch). The model
+        # is deliberately generic: what matters is the LaCrosseITPlusReader
+        # sketch, not the board - genuine JeeLink v3/v3c and Arduino clones
+        # (CH340 + RFM69/RFM12) behave identically on the serial port.
         self.device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name="LaCrosse JeeLink Bridge",
@@ -191,20 +201,20 @@ class JeeLinkCoordinator:
             model="JeeLink v3 / Arduino clone (LaCrosseITPlusReader)",
         )
 
-    # ── Benachrichtigungen ─────────────────────────────────────────────────────
+    # ── Notifications ──────────────────────────────────────────────────────────
 
     def _lang(self) -> str:
-        """'en' bei englischer HA-Systemsprache, sonst 'de' (Fallback)."""
+        """'en' for an English HA system language, otherwise 'de' (fallback)."""
         lang = (self.hass.config.language or "de").lower()
         return "en" if lang.startswith("en") else "de"
 
     def _notify_user(self, category: str, message_de: str, message_en: str) -> None:
-        """Sendet eine Meldung an die konfigurierte notify-Entity.
+        """Send a message to the configured notify entity.
 
-        Threadsicher (kann aus dem seriellen Reader-Thread aufgerufen
-        werden). Ohne konfigurierte Entity, mit notify_enabled=False oder
-        abgeschaltetem Meldungstyp (category) passiert nichts. Fehler beim
-        Versand duerfen den Betrieb nie stoeren.
+        Thread-safe (may be called from the serial reader thread). Nothing
+        happens without a configured entity, with notify_enabled=False, or
+        with the message type (category) switched off. Delivery errors must
+        never disturb operation.
         """
         if not self.notify_enabled or not self.notify_entity:
             return
@@ -222,57 +232,56 @@ class JeeLinkCoordinator:
                 )
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(
-                    "Benachrichtigung über %s fehlgeschlagen: %s",
-                    self.notify_entity, err,
+                    "Notification via %s failed: %s", self.notify_entity, err
                 )
 
         self.hass.loop.call_soon_threadsafe(
             lambda: self.hass.async_create_task(_send())
         )
 
-    # ── Batteriewechsel ────────────────────────────────────────────────────────
+    # ── Battery replacement ────────────────────────────────────────────────────
 
     def start_battery_replace(self, sensor_id: int, timeout: int | None = None) -> None:
-        """Aktiviert Batteriewechsel-Modus fuer sensor_id fuer timeout Sekunden.
+        """Arm the battery replacement mode for sensor_id for timeout seconds.
 
-        Identisch zu FHEMs 'set <device> replaceBatteryForSec <sec>'.
-        Der naechste unbekannte Sensor mit battery_new-Flag wird als Alias
-        auf diese ID gemappt. Ohne timeout gilt die konfigurierte Option
-        battery_replace_timeout (Standard 120 s).
+        Identical to FHEM's 'set <device> replaceBatteryForSec <sec>'. The
+        next unknown sensor carrying the battery_new flag is aliased onto
+        this ID. Without an explicit timeout, the configured option
+        battery_replace_timeout (default 120 s) applies.
         """
         if timeout is None:
             timeout = self.battery_replace_timeout
         self._replace_battery[sensor_id] = time.time() + timeout
         _LOGGER.info(
-            "Batteriewechsel-Modus aktiv fuer Sensor %d (%ds) - "
-            "bitte Batterie jetzt wechseln",
+            "Battery replacement mode armed for sensor %d (%ds) - "
+            "please swap the battery now",
             sensor_id, timeout,
         )
         self._notify_listeners()
-        # Nach Ablauf des Fensters die Entities aktualisieren, damit das
-        # Button-Attribut replace_active nicht bis zum naechsten Paket
-        # faelschlich auf "true" stehen bleibt.
+        # Refresh entities once the window expires so the button attribute
+        # replace_active does not incorrectly stay "true" until the next
+        # received packet.
         async_call_later(self.hass, timeout + 1, lambda _now: self._notify_listeners())
 
     def is_battery_replace_active(self, sensor_id: int) -> bool:
-        """True wenn Batteriewechsel-Modus fuer diesen Sensor gerade aktiv ist."""
+        """True while the battery replacement mode is armed for this sensor."""
         expiry = self._replace_battery.get(sensor_id)
         return expiry is not None and time.time() < expiry
 
     @property
     def data_stale(self) -> bool:
-        """True, solange der Funkstille-Watchdog ausgeloest ist (laenger als
-        data_timeout Minuten kein Paket trotz Verbindung). Als binary_sensor
-        exponiert, damit Automationen darauf reagieren koennen (z.B.
-        Stick-Reset), statt auf Benachrichtigungen angewiesen zu sein."""
+        """True while the radio-silence watchdog is triggered (no packet for
+        longer than data_timeout minutes despite an open connection).
+        Exposed as a binary sensor so automations can react (e.g. press the
+        stick reset button) without depending on notifications."""
         return self._data_timeout_notified
 
     def _resolve_id(self, sensor_id: int) -> int:
-        """Loest sensor_id ueber Alias-Tabelle auf (nach Batteriewechsel)."""
+        """Resolve sensor_id via the alias table (after battery replacement)."""
         return self._id_aliases.get(sensor_id, sensor_id)
 
     def _schedule_alias_save(self) -> None:
-        """Persistiert die Alias-Tabelle (threadsicher aus dem Reader-Thread)."""
+        """Persist the alias table (thread-safe from the reader thread)."""
         data = {str(k): v for k, v in self._id_aliases.items()}
 
         def _save() -> None:
@@ -281,7 +290,7 @@ class JeeLinkCoordinator:
         self.hass.loop.call_soon_threadsafe(_save)
 
     def get_sensor_device_info(self, sensor_id: int) -> DeviceInfo:
-        """DeviceInfo fuer einen einzelnen LaCrosse-Sensor, verknuepft mit der Bridge."""
+        """DeviceInfo for a single LaCrosse sensor, linked to the bridge."""
         if sensor_id not in self._sensor_device_infos:
             self._sensor_device_infos[sensor_id] = DeviceInfo(
                 identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")},
@@ -296,44 +305,43 @@ class JeeLinkCoordinator:
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
     async def async_start(self) -> None:
-        # Persistierte ID-Aliase (Batteriewechsel) laden, BEVOR Pakete
-        # verarbeitet werden - sonst wuerde eine bereits gemappte neue
-        # Funk-ID als neuer Sensor angelegt.
+        # Load persisted ID aliases (battery replacement) BEFORE any packet
+        # is processed - otherwise an already mapped new radio ID would be
+        # created as a new sensor.
         stored = await self._alias_store.async_load()
         if stored:
             self._id_aliases = {int(k): int(v) for k, v in stored.items()}
-            _LOGGER.debug("Geladene ID-Aliase: %s", self._id_aliases)
+            _LOGGER.debug("Loaded ID aliases: %s", self._id_aliases)
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._serial_loop, name="jeelink-serial", daemon=True
         )
         self._thread.start()
 
-        # Minuetlicher Wartungs-Tick: Funkstille-Watchdog (data_timeout
-        # Minuten, 0 = aus) und Aufräumen verwaister Auto-Sensoren
-        # (stale_cleanup_hours, 0 = aus, geprueft alle 15 Minuten).
+        # Per-minute maintenance tick: radio-silence watchdog (data_timeout
+        # minutes, 0 = off) and cleanup of stray auto-discovered sensors
+        # (stale_cleanup_hours, 0 = off, checked every 15 minutes).
         if self.data_timeout_min > 0 or self.stale_cleanup_hours > 0:
             self._unsub_watchdog = async_track_time_interval(
                 self.hass, self._async_maintenance, datetime.timedelta(seconds=60)
             )
 
     def preload_from_registry(self) -> list[SensorDiscovery]:
-        """Bekannte Sensoren aus der Entity-Registry rekonstruieren.
+        """Reconstruct known sensors from the entity registry.
 
-        Wird nach dem Plattform-Setup aufgerufen (siehe __init__.py), damit
-        ALLE Entities eines bekannten Sensors sofort wieder existieren -
-        auch wenn der Sensor (z.B. wegen leerer Batterie) nie wieder ein
-        Paket sendet. Ohne dies blieben insbesondere der "Batterie
-        gewechselt"-Button und der Batterie-Sensor eines toten Sensors nach
-        einem Neustart dauerhaft nicht verfuegbar - der Button wird aber
-        genau dann gebraucht.
+        Called after platform setup (see __init__.py) so that ALL entities
+        of a known sensor exist again immediately - even if the sensor
+        (e.g. with an empty battery) never sends another packet. Without
+        this, especially the "battery replaced" button and the battery
+        sensor of a dead sensor would stay unavailable after a restart -
+        and the button is needed exactly then.
         """
         registry = er.async_get(self.hass)
         known_entries = er.async_entries_for_config_entry(registry, self._entry_id)
         prefix = self._entry_id + "_"
-        # unique_id-Suffix -> Discovery-Kanal. dewpoint wird bewusst
-        # ausgelassen: die Entity entsteht zusammen mit "humidity".
-        # "_battery_replace" (Button) muss vor "_battery" geprueft werden.
+        # unique_id suffix -> discovery channel. dewpoint is deliberately
+        # omitted: its entity is created together with "humidity".
+        # "_battery_replace" (button) must be checked before "_battery".
         suffix_to_channel = (
             ("_battery_replace", "replace_battery"),
             ("_temperature2", "temperature2"),
@@ -363,7 +371,7 @@ class JeeLinkCoordinator:
 
     @callback
     def _async_maintenance(self, _now=None) -> None:
-        """Minuetlicher Wartungs-Tick: Funkstille-Watchdog + Stale-Cleanup."""
+        """Per-minute maintenance tick: radio-silence watchdog + stale cleanup."""
         if self.data_timeout_min > 0:
             self._check_data_timeout()
         if self.stale_cleanup_hours > 0 and (
@@ -373,21 +381,21 @@ class JeeLinkCoordinator:
             self._cleanup_stale_sensors()
 
     def _check_data_timeout(self) -> None:
-        """Warnt, wenn laenger als data_timeout Minuten kein Funkpaket mehr
-        geparst wurde (Entwarnung kommt aus _parse_line, sobald wieder
-        Daten eintreffen)."""
+        """Warn when no radio packet has been parsed for longer than
+        data_timeout minutes (the all-clear is sent from _parse_line as soon
+        as data comes in again)."""
         if not self.connected or not self.last_data_ts:
-            # Ohne Verbindung greift bereits die Verbindungs-Meldung;
-            # ohne jemals empfangene Daten keine Basis fuer einen Vergleich.
+            # Without a connection the connection-loss message already
+            # covers it; without any received data there is no baseline.
             return
         silence = time.time() - self.last_data_ts
         if silence > self.data_timeout_min * 60 and not self._data_timeout_notified:
             self._data_timeout_notified = True
-            self._notify_listeners()  # binary_sensor "Funkstille" aktualisieren
+            self._notify_listeners()  # update the "radio silence" binary sensor
             minutes = int(silence // 60)
             _LOGGER.warning(
-                "JeeLink: seit %d Minuten keine Funkpakete mehr empfangen "
-                "(Verbindung besteht)", minutes,
+                "JeeLink: no radio packets received for %d minutes "
+                "(connection is up)", minutes,
             )
             self._notify_user(
                 "data_timeout",
@@ -398,8 +406,9 @@ class JeeLinkCoordinator:
             )
 
     def _last_seen_epoch(self, sensor_id: int) -> float | None:
-        """Zeitpunkt des letzten Pakets als Epoch-Sekunden. Der Wert kann je
-        nach Quelle Epoch (live), datetime oder ISO-String (Restore) sein."""
+        """Timestamp of the last packet as epoch seconds. Depending on the
+        source the value may be an epoch (live), datetime or ISO string
+        (restored)."""
         val = self.sensor_states.get((sensor_id, "last_seen"))
         if isinstance(val, (int, float)):
             return float(val)
@@ -412,20 +421,19 @@ class JeeLinkCoordinator:
 
     @callback
     def _cleanup_stale_sensors(self) -> None:
-        """Entfernt automatisch angelegte Sensoren, die laenger als
-        stale_cleanup_hours keine Daten mehr gesendet haben.
+        """Remove auto-discovered sensors that have not sent data for longer
+        than stale_cleanup_hours.
 
-        Schutzmechanismen - entfernt wird NUR ein Sensor, den der Nutzer
-        erkennbar nie angefasst hat:
-        - Geraet umbenannt (name_by_user), einem Raum zugeordnet (area_id)
-          oder mit Labels versehen -> geschuetzt.
-        - Irgendeine Entity des Sensors umbenannt, einem Raum zugeordnet,
-          mit Labels/Aliassen versehen oder von der automatischen Vergabe
-          abweichend konfiguriert -> geschuetzt.
-        Ein derart "adoptierter" Sensor bleibt auch mit leerer Batterie
-        erhalten (inkl. Batteriewechsel-Button!).
-        - Ohne bekannten "Zuletzt empfangen"-Zeitstempel wird nichts
-          entfernt (keine Basis fuer die Entscheidung).
+        Safeguards - ONLY a sensor the user has demonstrably never touched
+        is removed:
+        - Device renamed (name_by_user), assigned to an area (area_id) or
+          labelled -> protected.
+        - Any entity of the sensor renamed, assigned to an area, labelled
+          or aliased -> protected.
+        Such an "adopted" sensor is kept even with an empty battery
+        (including its battery-replaced button!).
+        - Without a known "last received" timestamp nothing is removed
+          (no basis for the decision).
         """
         cutoff = time.time() - self.stale_cleanup_hours * 3600
         ent_reg = er.async_get(self.hass)
@@ -440,7 +448,7 @@ class JeeLinkCoordinator:
                 identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")}
             )
             if device and (device.name_by_user or device.area_id or device.labels):
-                continue  # vom Nutzer angefasst -> niemals automatisch loeschen
+                continue  # touched by the user -> never remove automatically
 
             uid_prefix = f"{self._entry_id}_{sensor_id}_"
             sensor_entities = [
@@ -452,14 +460,14 @@ class JeeLinkCoordinator:
                 or reg_entry.aliases
                 for reg_entry in sensor_entities
             ):
-                continue  # mindestens eine Entity individualisiert -> behalten
+                continue  # at least one entity customised -> keep
 
             for reg_entry in sensor_entities:
                 ent_reg.async_remove(reg_entry.entity_id)
             if device:
                 dev_reg.async_remove_device(device.id)
 
-            # Internen Zustand mit ausraeumen
+            # Clean up internal state as well
             self._discovered.pop(sensor_id, None)
             self._sensor_device_infos.pop(sensor_id, None)
             self._battery_notified.discard(sensor_id)
@@ -476,8 +484,8 @@ class JeeLinkCoordinator:
                 self._cache.pop(key, None)
 
             _LOGGER.info(
-                "LaCrosse Sensor %d automatisch entfernt: keine Daten seit "
-                "mehr als %d h und nicht umbenannt (stale_cleanup_hours)",
+                "LaCrosse sensor %d removed automatically: no data for more "
+                "than %d h and never customised (stale_cleanup_hours)",
                 sensor_id, self.stale_cleanup_hours,
             )
 
@@ -506,7 +514,7 @@ class JeeLinkCoordinator:
         for cb in self._state_listeners:
             cb()
 
-    # ── Discovery-Callbacks ────────────────────────────────────────────────────
+    # ── Discovery callbacks ────────────────────────────────────────────────────
 
     def register_discovery_callback(self, cb) -> callable:
         self._discovery_callbacks.append(cb)
@@ -523,15 +531,15 @@ class JeeLinkCoordinator:
     # ── Reset ──────────────────────────────────────────────────────────────────
 
     def request_reset(self) -> None:
-        _LOGGER.info("JeeLink: DTR-Reset angefordert")
+        _LOGGER.info("JeeLink: DTR reset requested")
         self._reset_event.set()
 
-    # ── Debug-Modus ────────────────────────────────────────────────────────────
+    # ── Debug mode ─────────────────────────────────────────────────────────────
 
     def enable_debug(self) -> None:
         self.debug = True
         _LOGGER.info(
-            "[DEBUG] Debug-Modus aktiviert - automatisch aus in %ds", self.debug_timeout
+            "[DEBUG] Debug mode enabled - auto-off in %ds", self.debug_timeout
         )
         if self._debug_cancel:
             self._debug_cancel()
@@ -551,7 +559,7 @@ class JeeLinkCoordinator:
         if self._debug_cancel:
             self._debug_cancel()
             self._debug_cancel = None
-        _LOGGER.info("[DEBUG] Debug-Modus deaktiviert")
+        _LOGGER.info("[DEBUG] Debug mode disabled")
         self.hass.async_create_task(
             self.hass.services.async_call(
                 "logger", "set_level",
@@ -565,7 +573,7 @@ class JeeLinkCoordinator:
         self.debug = False
         self._debug_cancel = None
         _LOGGER.info(
-            "[DEBUG] Debug-Modus automatisch nach %ds beendet", self.debug_timeout
+            "[DEBUG] Debug mode ended automatically after %ds", self.debug_timeout
         )
         self.hass.async_create_task(
             self.hass.services.async_call(
@@ -579,7 +587,19 @@ class JeeLinkCoordinator:
         if self.debug:
             _LOGGER.info("[DEBUG] %s", msg)
 
-    # ── Serieller Reader ───────────────────────────────────────────────────────
+    # ── Serial reader ──────────────────────────────────────────────────────────
+
+    def _init_command_bytes(self, include_version: bool = True) -> bytes:
+        """Build the byte sequence of configured firmware init commands.
+
+        Space-separated commands (equivalent to FHEM's initCommands
+        attribute), each terminated with CR. "v" (request the firmware
+        banner) is appended for deterministic stick identification.
+        """
+        commands = [c for c in self.init_commands.split() if c]
+        if include_version:
+            commands.append("v")
+        return "".join(f"{c}\r" for c in commands).encode()
 
     def _dtr_reset(self, ser: serial.Serial) -> None:
         try:
@@ -587,14 +607,14 @@ class JeeLinkCoordinator:
             time.sleep(0.25)
             ser.setDTR(True)
             time.sleep(2.0)
-            _LOGGER.info("JeeLink Hardware-Reset (DTR) durchgefuehrt")
+            _LOGGER.info("JeeLink hardware reset (DTR) performed")
         except Exception as exc:
-            _LOGGER.warning("DTR-Reset fehlgeschlagen: %s", exc)
+            _LOGGER.warning("DTR reset failed: %s", exc)
 
     @callback
     def _async_apply_firmware(self) -> None:
-        """Traegt die erkannte Firmware als sw_version am Bridge-Geraet
-        nach (Analogie zu FHEMs model/settings Internals)."""
+        """Store the detected firmware as sw_version on the bridge device
+        (analogous to FHEM's model/settings internals)."""
         dev_reg = dr.async_get(self.hass)
         device = dev_reg.async_get_device(identifiers={(DOMAIN, self._entry_id)})
         if device:
@@ -602,7 +622,7 @@ class JeeLinkCoordinator:
         self._notify_listeners()
 
     def _set_connected(self, connected: bool, reason: str = "") -> None:
-        """Verbindungsstatus pflegen + Benachrichtigung bei Wechsel."""
+        """Maintain the connection state + notify on changes."""
         if connected == self.connected:
             return
         self.connected = connected
@@ -628,9 +648,9 @@ class JeeLinkCoordinator:
         ser = None
         while not self._stop_event.is_set():
             try:
-                # stty ist ein Linux-spezifisches Sicherheitsnetz (raw-Modus,
-                # kein Echo). Best-effort: auf Systemen ohne stty oder mit
-                # anderen Gerätepfaden setzt pyserial die Parameter selbst.
+                # stty is a Linux-specific safety net (raw mode, no echo)
+                # for CH340 adapters. Best effort: on systems without stty
+                # pyserial sets the parameters itself.
                 try:
                     subprocess.run(
                         ["stty", "-F", self.serial_port, "57600", "raw",
@@ -638,24 +658,28 @@ class JeeLinkCoordinator:
                         check=True, capture_output=True
                     )
                 except (OSError, subprocess.CalledProcessError) as exc:
-                    _LOGGER.debug("stty übersprungen (%s)", exc)
-                _LOGGER.info("Verbinde mit %s...", self.serial_port)
+                    _LOGGER.debug("stty skipped (%s)", exc)
+                _LOGGER.info("Connecting to %s...", self.serial_port)
                 ser = serial.Serial(self.serial_port, 57600, timeout=self.serial_timeout)
                 self._dtr_reset(ser)
-                # 7m/10t = Datenraten-Toggle, v = Versions-/Identifikations-
-                # Banner anfordern (kommt nach dem DTR-Reset meist auch von
-                # selbst - "v" macht es deterministisch).
-                ser.write(b"7m\r10t\rv\r")
-                _LOGGER.info("JeeLink initialisiert, lese Daten...")
+                # Configured init commands (default "7m 10t" = data-rate
+                # toggle) plus "v" to request the firmware identification
+                # banner (usually also emitted after the DTR reset - "v"
+                # makes it deterministic).
+                ser.write(self._init_command_bytes())
+                _LOGGER.info(
+                    "JeeLink initialised (commands: %s), reading data...",
+                    self.init_commands,
+                )
                 self._set_connected(True)
-                # Baseline fuer den Funkstille-Watchdog: ab JETZT zaehlen,
-                # nicht ab dem letzten Paket vor einem Verbindungsabbruch.
+                # Baseline for the radio-silence watchdog: count from NOW,
+                # not from the last packet before a connection loss.
                 self.last_data_ts = time.time()
                 self._reset_event.clear()
 
                 while not self._stop_event.is_set():
                     if self._reset_event.is_set():
-                        _LOGGER.info("Reset-Signal empfangen - schliesse Serial fuer Reconnect")
+                        _LOGGER.info("Reset signal received - closing serial for reconnect")
                         self._reset_event.clear()
                         break
 
@@ -664,22 +688,22 @@ class JeeLinkCoordinator:
                         continue
 
                     if "drecvintr exit" in line:
-                        _LOGGER.warning("Firmware: drecvintr exit - DTR-Reset")
+                        _LOGGER.warning("Firmware: drecvintr exit - DTR reset")
                         self._dtr_reset(ser)
-                        ser.write(b"7m\r10t\r")
+                        ser.write(self._init_command_bytes(include_version=False))
                         continue
 
                     if "RFM12 hang" in line:
-                        _LOGGER.warning("Firmware: RFM12 hang - DTR-Reset")
+                        _LOGGER.warning("Firmware: RFM12 hang - DTR reset")
                         self._dtr_reset(ser)
-                        ser.write(b"7m\r10t\r")
+                        ser.write(self._init_command_bytes(include_version=False))
                         continue
 
                     if line.startswith("[") and line.endswith("]"):
                         fw = line[1:-1].strip()
                         if fw and fw != self.firmware:
                             self.firmware = fw
-                            _LOGGER.info("JeeLink Firmware erkannt: %s", fw)
+                            _LOGGER.info("JeeLink firmware detected: %s", fw)
                             self.hass.loop.call_soon_threadsafe(
                                 self._async_apply_firmware
                             )
@@ -690,7 +714,7 @@ class JeeLinkCoordinator:
 
             except Exception as exc:
                 _LOGGER.error(
-                    "Serieller Fehler: %s - reconnect in %ds", exc, self.reconnect_delay
+                    "Serial error: %s - reconnect in %ds", exc, self.reconnect_delay
                 )
                 self._set_connected(False, str(exc))
                 try:
@@ -698,29 +722,29 @@ class JeeLinkCoordinator:
                         ser.close()
                 except Exception:
                     pass
-                # In kurzen Schritten warten, damit ein Unload nicht blockiert
+                # Wait in short steps so an unload does not block
                 deadline = time.time() + self.reconnect_delay
                 while time.time() < deadline and not self._stop_event.is_set():
                     time.sleep(0.5)
 
-    # ── Protokoll-Parsing (gemaess 36_LaCrosse.pm) ────────────────────────────
+    # ── Protocol parsing (as per 36_LaCrosse.pm) ───────────────────────────────
 
     def _parse_line(self, line: str) -> None:
-        """Parse eines OK-9-Telegramms.
+        """Parse a single OK-9 telegram.
 
-        Byte-Layout (identisch zu FHEM 36_LaCrosse.pm Zeilen 213-220):
-          parts[2]  Sensor-ID
-          parts[3]  Flags: bit7=new_battery, bits4-6=type, bits0-3=channel
-          parts[4]  Temp MSB
-          parts[5]  Temp LSB
-          parts[6]  Hum-Byte: bit7=battery_low, bits0-6=humidity (1-100 gueltig)
+        Byte layout (identical to FHEM 36_LaCrosse.pm lines 213-220):
+          parts[2]  sensor ID
+          parts[3]  flags: bit7=new_battery, bits4-6=type, bits0-3=channel
+          parts[4]  temp MSB
+          parts[5]  temp LSB
+          parts[6]  hum byte: bit7=battery_low, bits0-6=humidity (valid 1-100)
         """
         try:
             parts = line.split()
             if len(parts) < 6:
                 return
 
-            # Funkstille-Watchdog fuettern + ggf. Entwarnung senden
+            # Feed the radio-silence watchdog + send the all-clear if needed
             self.last_data_ts = time.time()
             if self._data_timeout_notified:
                 self._data_timeout_notified = False
@@ -737,28 +761,28 @@ class JeeLinkCoordinator:
             t_lsb     = int(parts[5])
             hum_raw   = int(parts[6]) if len(parts) > 6 else None
 
-            # Temperatur
+            # Temperature
             temperature = round((t_msb * 256 + t_lsb - 1000) / 10.0, 1)
 
-            # Flags-Byte (parts[3])
-            battery_new = bool(flags & 0x80)          # Bit 7: neue Batterie eingelegt
-            channel     = flags & 0x0F                 # Bits 0-3: Kanal (1=Haupt, 2=Probe2)
+            # Flags byte (parts[3])
+            battery_new = bool(flags & 0x80)          # bit 7: new battery inserted
+            channel     = flags & 0x0F                 # bits 0-3: channel (1=main, 2=probe2)
             is_probe2   = (channel == 2)
 
-            # Humidity-Byte (parts[6])
-            # Bit 7 = schwache Batterie (battery_low), Bits 0-6 = Feuchte
+            # Humidity byte (parts[6])
+            # Bit 7 = weak battery (battery_low), bits 0-6 = humidity
             if hum_raw is not None:
                 battery_low = bool(hum_raw & 0x80)
-                hum_masked  = hum_raw & 0x7F           # Batterie-Bit abmaskieren
-                # Gueltig: 1-100; >100 = kein Feuchtesensor (z.B. 106 = temp-only)
+                hum_masked  = hum_raw & 0x7F           # mask off the battery bit
+                # Valid: 1-100; >100 = no humidity sensor (e.g. 106 = temp-only)
                 hum = hum_masked if 1 <= hum_masked <= 100 else None
             else:
                 battery_low = False
                 hum_masked  = None
                 hum         = None
 
-            # ── Batteriewechsel-Erkennung (wie FHEM replaceBatteryForSec) ──────
-            # Unbekannte ID mit battery_new -> pruefen ob ein Sensor im Replace-Modus ist
+            # ── Battery replacement detection (like FHEM replaceBatteryForSec) ─
+            # Unknown ID with battery_new -> check if a sensor is in replace mode
             is_unknown = (sensor_id not in self._discovered
                           and sensor_id not in self._id_aliases)
             if battery_new and is_unknown:
@@ -766,8 +790,8 @@ class JeeLinkCoordinator:
                 for old_id, expiry in list(self._replace_battery.items()):
                     if now < expiry:
                         _LOGGER.info(
-                            "Batteriewechsel erkannt: Sensor %d hat neue ID %d - "
-                            "Alias gespeichert, bestehende Entities bleiben erhalten",
+                            "Battery replacement detected: sensor %d has new ID %d - "
+                            "alias stored, existing entities are kept",
                             old_id, sensor_id,
                         )
                         self._id_aliases[sensor_id] = old_id
@@ -783,7 +807,7 @@ class JeeLinkCoordinator:
                         self.hass.loop.call_soon_threadsafe(self._notify_listeners)
                         break
 
-            # ID durch Alias aufloesen (liefert old_id falls nach Batteriewechsel)
+            # Resolve the ID via the alias table (returns old_id after a swap)
             resolved_id = self._resolve_id(sensor_id)
 
             self._debug_log(
@@ -795,12 +819,12 @@ class JeeLinkCoordinator:
 
             if battery_new and resolved_id == sensor_id:
                 _LOGGER.info(
-                    "JeeLink sensor %d: neue Batterie eingelegt "
-                    "(kein Batteriewechsel-Modus aktiv)",
+                    "JeeLink sensor %d: new battery inserted "
+                    "(no battery replacement mode armed)",
                     sensor_id,
                 )
 
-            # Welche Kanaele sind fuer diesen Sensor neu?
+            # Which channels are new for this sensor?
             temp_channel = "temperature2" if is_probe2 else "temperature"
             new_discoveries: list[SensorDiscovery] = []
             was_known = resolved_id in self._discovered
@@ -810,18 +834,18 @@ class JeeLinkCoordinator:
                 if temp_channel not in known:
                     known.add(temp_channel)
                     new_discoveries.append(SensorDiscovery(resolved_id, temp_channel))
-                # Humidity-Entity nur wenn echter Messwert empfangen (1-100%)
+                # Humidity entity only when a real reading was received (1-100%)
                 if hum is not None and "humidity" not in known:
                     known.add("humidity")
                     new_discoveries.append(SensorDiscovery(resolved_id, "humidity"))
                 if "battery" not in known:
                     known.add("battery")
                     new_discoveries.append(SensorDiscovery(resolved_id, "battery"))
-                # "Zuletzt empfangen"-Zeitstempel pro Sensor
+                # "Last received" timestamp per sensor
                 if "last_seen" not in known:
                     known.add("last_seen")
                     new_discoveries.append(SensorDiscovery(resolved_id, "last_seen"))
-                # Batteriewechsel-Button einmalig pro Sensor anlegen
+                # Create the battery-replaced button once per sensor
                 if "replace_battery" not in known:
                     known.add("replace_battery")
                     new_discoveries.append(SensorDiscovery(resolved_id, "replace_battery"))
@@ -843,28 +867,28 @@ class JeeLinkCoordinator:
                             + ")",
                         )
 
-            # Temperatur-Update
+            # Temperature update
             temp_key = (resolved_id, temp_channel)
             temp_ok = self._check_temperature(temp_key, temperature, line)
             self._debug_log(
                 f"sensor {resolved_id} {temp_channel}: {temperature} degC "
-                f"-> {'OK' if temp_ok else 'GEFILTERT'}"
+                f"-> {'OK' if temp_ok else 'FILTERED'}"
             )
             if temp_ok:
                 self._update(temp_key, temperature)
 
-            # Humidity-Update (nur echte Werte 1-100%)
+            # Humidity update (real values 1-100% only)
             if hum is not None:
                 hum_key = (resolved_id, "humidity")
                 hum_ok = self._check_humidity(hum_key, hum, line)
                 self._debug_log(
                     f"sensor {resolved_id} humidity: {hum}% "
-                    f"-> {'OK' if hum_ok else 'GEFILTERT'}"
+                    f"-> {'OK' if hum_ok else 'FILTERED'}"
                 )
                 if hum_ok:
                     self._update(hum_key, hum)
 
-                    # Taupunkt berechnen (wie FHEM doDewpoint)
+                    # Calculate the dew point (like FHEM doDewpoint)
                     if temp_ok:
                         try:
                             dp = round(_dewpoint(temperature, hum), 1)
@@ -872,17 +896,17 @@ class JeeLinkCoordinator:
                         except (ValueError, ZeroDivisionError):
                             pass
 
-            # "Zuletzt empfangen": jedes geparste Paket zaehlt, auch wenn der
-            # Messwert vom Ausreisser-Filter verworfen wurde - empfangen ist
-            # empfangen. Auf volle Minuten quantisiert, damit nicht jedes
-            # 4-Sekunden-Paket einen neuen State (Datenbank-Eintrag) erzeugt.
+            # "Last received": every parsed packet counts, even if the
+            # reading was rejected by the outlier filter - received is
+            # received. Quantised to full minutes so that not every
+            # 4-second packet creates a new state (database row).
             self._update((resolved_id, "last_seen"), int(time.time() // 60 * 60))
 
-            # Batterie-Update (+ einmalige Meldung beim Wechsel auf "schwach")
+            # Battery update (+ one-time message on transition to "low")
             if battery_low and resolved_id not in self._battery_notified:
                 self._battery_notified.add(resolved_id)
-                # Nur melden, wenn der Sensor schon bekannt war (kein Spam
-                # direkt bei der Erst-Discovery eines leeren Sensors).
+                # Only notify for already known sensors (no spam right at
+                # the first discovery of a sensor with an empty battery).
                 if was_known:
                     self._notify_user(
                         "battery_low",
@@ -894,7 +918,7 @@ class JeeLinkCoordinator:
             self._update((resolved_id, "battery"), battery_low)
 
         except (IndexError, ValueError) as exc:
-            _LOGGER.error("Parse-Fehler '%s': %s", line, exc)
+            _LOGGER.error("Parse error '%s': %s", line, exc)
 
     def _update(self, key: tuple, value) -> None:
         if self._cache.get(key) != value:
@@ -905,8 +929,8 @@ class JeeLinkCoordinator:
     def _check_temperature(self, key: tuple, temperature: float, raw: str) -> bool:
         if not (DEFAULT_TEMP_MIN <= temperature <= DEFAULT_TEMP_MAX):
             _LOGGER.warning(
-                "[JeeLink] Temp-Ausreisser absolut: sensor=%s T=%s degC "
-                "(erlaubt %s..%s) | raw: %s",
+                "[JeeLink] Temperature outlier (absolute): sensor=%s T=%s degC "
+                "(allowed %s..%s) | raw: %s",
                 key[0], temperature, DEFAULT_TEMP_MIN, DEFAULT_TEMP_MAX, raw,
             )
             self._outlier_counter.pop(key, None)
@@ -921,14 +945,14 @@ class JeeLinkCoordinator:
                     self._outlier_counter[key] = (temperature, count)
                     if count >= self.outlier_confirm_count:
                         _LOGGER.info(
-                            "[JeeLink] Ausreisser bestaetigt (%dx gleicher Wert): "
+                            "[JeeLink] Outlier confirmed (%dx same value): "
                             "sensor=%s %s->%s degC | raw: %s",
                             count, key[0], last, temperature, raw,
                         )
                         self._outlier_counter.pop(key, None)
                         return True
                     _LOGGER.warning(
-                        "[JeeLink] Temp-Ausreisser delta: sensor=%s %s->%s degC "
+                        "[JeeLink] Temperature outlier (delta): sensor=%s %s->%s degC "
                         "(d%.1f > %s, %d/%d) | raw: %s",
                         key[0], last, temperature, delta, DEFAULT_TEMP_MAX_DELTA,
                         count, self.outlier_confirm_count, raw,
@@ -940,10 +964,10 @@ class JeeLinkCoordinator:
         return True
 
     def _check_humidity(self, key: tuple, humidity: int, raw: str) -> bool:
-        # Absolut-Pruefung: 1-100% (FHEM: $humidity && $humidity <= 100)
+        # Absolute check: 1-100% (FHEM: $humidity && $humidity <= 100)
         if not (1 <= humidity <= 100):
             _LOGGER.warning(
-                "[JeeLink] Feuchte-Ausreisser absolut: sensor=%s %d%% | raw: %s",
+                "[JeeLink] Humidity outlier (absolute): sensor=%s %d%% | raw: %s",
                 key[0], humidity, raw,
             )
             self._outlier_counter.pop(key, None)
@@ -958,14 +982,14 @@ class JeeLinkCoordinator:
                     self._outlier_counter[key] = (humidity, count)
                     if count >= self.outlier_confirm_count:
                         _LOGGER.info(
-                            "[JeeLink] Ausreisser bestaetigt (%dx gleicher Wert): "
+                            "[JeeLink] Outlier confirmed (%dx same value): "
                             "sensor=%s %s->%d%% | raw: %s",
                             count, key[0], last, humidity, raw,
                         )
                         self._outlier_counter.pop(key, None)
                         return True
                     _LOGGER.warning(
-                        "[JeeLink] Feuchte-Ausreisser delta: sensor=%s %s->%d%% "
+                        "[JeeLink] Humidity outlier (delta): sensor=%s %s->%d%% "
                         "(d%.1f > %s, %d/%d) | raw: %s",
                         key[0], last, humidity, delta, DEFAULT_HUM_MAX_DELTA,
                         count, self.outlier_confirm_count, raw,

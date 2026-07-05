@@ -29,7 +29,7 @@ The serial handling covers both: 57600 baud (FHEM's default for this firmware), 
 
 Sensors: LaCrosse/Technoline TX25, TX27, TX29 (IT+), TX35, TX37 and compatibles (30.3143, 30.3144, 30.3155, 30.3156, …).
 
-On connect the integration sends the firmware commands `7m` (data-rate toggle mask 7 = cycle all three rates: 17.241 / 9.579 / 8.842 kbps) and `10t` (toggle every 10 s), so mixed sensor generations are received without manual rate tuning — equivalent to FHEM's `initCommands` attribute.
+On connect the integration sends the configured firmware init commands (default `7m 10t`: data-rate toggle mask 7 = cycle all three rates 17.241 / 9.579 / 8.842 kbps, toggling every 10 s), so mixed sensor generations are received without manual rate tuning — equivalent to FHEM's `initCommands` attribute and changeable in the options.
 
 ## Installation
 
@@ -71,6 +71,7 @@ Copy `custom_components/lacrosse_jeelink/` into your `config/custom_components/`
 | Send notifications | on | Master switch for all notifications. |
 | Notify entity | empty | Target `notify.*` entity (Telegram, mobile app, …). Empty = no messages, regardless of the switches. |
 | Notify: connection / radio silence / new sensor / battery low / battery replaced | all on | Each notification type can be enabled/disabled individually (in addition to the master switch). |
+| Firmware init commands | `7m 10t` | Space-separated commands sent to the sketch on every connect — like FHEM's `initCommands` attribute. The default cycles all three data rates every 10 s; users with a homogeneous sensor generation can pin a fixed rate (e.g. `0m 17241r`) to save sensor battery. |
 
 ## Entities
 

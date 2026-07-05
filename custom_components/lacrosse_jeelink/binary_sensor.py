@@ -21,7 +21,7 @@ async def async_setup_entry(
 ) -> None:
     coordinator: JeeLinkCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Statische Bridge-Sensoren: serielle Verbindung + Funkstille-Watchdog
+    # Static bridge sensors: serial connection + radio-silence watchdog
     async_add_entities(
         [
             JeeLinkConnectedSensor(coordinator, entry),
@@ -43,7 +43,7 @@ async def async_setup_entry(
 
 
 class JeeLinkConnectedSensor(BinarySensorEntity):
-    """Verbindungsstatus der seriellen JeeLink-Verbindung (Bridge-Gerät)."""
+    """Connection state of the serial JeeLink link (bridge device)."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -85,10 +85,10 @@ class JeeLinkConnectedSensor(BinarySensorEntity):
 
 
 class JeeLinkRadioSilenceSensor(BinarySensorEntity):
-    """Funkstille-Watchdog als Entity (Bridge-Gerät): on = laenger als
-    data_timeout Minuten kein Funkpaket trotz bestehender Verbindung.
-    Gedacht fuer Automationen (z.B. Stick-Reset ausloesen), unabhaengig von
-    den Benachrichtigungen."""
+    """Radio-silence watchdog as an entity (bridge device): on = no radio
+    packet for longer than data_timeout minutes despite an open connection.
+    Meant for automations (e.g. triggering a stick reset), independent of
+    the notifications."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -126,7 +126,7 @@ class JeeLinkRadioSilenceSensor(BinarySensorEntity):
 
 
 class LaCrosseBatterySensor(BinarySensorEntity):
-    """True (on) = Batterie leer."""
+    """True (on) = battery low."""
 
     _attr_device_class = BinarySensorDeviceClass.BATTERY
     _attr_entity_category = EntityCategory.DIAGNOSTIC

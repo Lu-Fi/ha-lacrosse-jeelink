@@ -41,7 +41,8 @@
           "notify_new_sensor": "Notify: new sensor discovered",
           "notify_battery_low": "Notify: battery low",
           "notify_battery_replaced": "Notify: battery replacement detected",
-          "stale_cleanup_hours": "Auto-remove silent sensors after (hours, 0 = off)"
+          "stale_cleanup_hours": "Auto-remove silent sensors after (hours, 0 = off)",
+          "init_commands": "Firmware init commands"
         },
         "data_description": {
           "outlier_confirm_count": "How many times the same outlier value must be reported consecutively before it is accepted as valid (2–20).",
@@ -52,7 +53,8 @@
           "notify_enabled": "Master switch for all notifications (connection lost/restored, new sensor discovered, battery low, battery replacement detected).",
           "notify_entity": "Target notify.* entity (Telegram, mobile app, …). Empty = no messages.",
           "data_timeout": "Warn when no radio packet has been parsed for this long even though the serial connection is up (silent firmware hang, antenna problem). A recovery message is sent when data resumes. 0 disables the watchdog.",
-          "stale_cleanup_hours": "Automatically remove auto-discovered sensors that haven't sent data for this long — e.g. a neighbour's sensor that briefly reached your receiver. Only untouched sensors are removed: renaming the device or any entity, assigning an area, or adding labels protects a sensor permanently (it keeps its entities and battery-replaced button even with an empty battery)."
+          "stale_cleanup_hours": "Automatically remove auto-discovered sensors that haven't sent data for this long — e.g. a neighbour's sensor that briefly reached your receiver. Only untouched sensors are removed: renaming the device or any entity, assigning an area, or adding labels protects a sensor permanently (it keeps its entities and battery-replaced button even with an empty battery).",
+          "init_commands": "Space-separated commands sent to the sketch on every connect (like FHEM's initCommands). Default '7m 10t' = cycle all three data rates every 10 s. Example for a fixed rate: '0m' plus '17241r'."
         }
       }
     }

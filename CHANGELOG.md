@@ -2,6 +2,17 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-07-05
+
+### Added
+
+- **Configurable firmware init commands** (option `init_commands`, default `7m 10t`) — the space-separated commands sent to the sketch on every connect and after firmware-hang resets, equivalent to FHEM's `initCommands` attribute. Users with a single sensor generation can pin a fixed data rate (e.g. `0m 17241r`) to save sensor battery.
+
+### Changed
+
+- **Code base fully translated to English** (comments, docstrings, log messages) for public contributions; behaviour unchanged.
+- Localisation audit: all config/options labels and descriptions exist in German and English, entity name keys are identical across both languages, and every notification (Telegram & co.) is sent in the Home Assistant system language (DE/EN pairs verified).
+
 ## [1.1.2] - 2026-07-05
 
 ### Added

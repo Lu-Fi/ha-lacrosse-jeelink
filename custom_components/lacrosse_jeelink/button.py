@@ -1,4 +1,4 @@
-"""Buttons: JeeLink DTR-Reset (Bridge) + Batteriewechsel (pro Sensor)."""
+"""Buttons: JeeLink DTR reset (bridge) + battery replacement (per sensor)."""
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
@@ -17,10 +17,10 @@ async def async_setup_entry(
 ) -> None:
     coordinator: JeeLinkCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Bridge-Reset-Button (statisch, immer vorhanden)
+    # Bridge reset button (static, always present)
     async_add_entities([JeeLinkResetButton(coordinator, entry)])
 
-    # Batteriewechsel-Button (dynamisch, je entdecktem Sensor)
+    # Battery-replaced button (dynamic, per discovered sensor)
     @callback
     def _on_discovery(discoveries: list[SensorDiscovery]) -> None:
         entities = [
@@ -35,7 +35,7 @@ async def async_setup_entry(
 
 
 class JeeLinkResetButton(ButtonEntity):
-    """DTR Hardware-Reset des JeeLink USB-Sticks."""
+    """DTR hardware reset of the JeeLink USB stick."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "reset"
@@ -58,17 +58,18 @@ class JeeLinkResetButton(ButtonEntity):
 
 
 class LaCrosseBatteryReplaceButton(ButtonEntity):
-    """Startet den Batteriewechsel-Modus fuer einen Sensor (wie FHEM replaceBatteryForSec).
+    """Arms the battery replacement mode for a sensor (like FHEM's
+    replaceBatteryForSec).
 
-    Nach dem Druck hat man 120 Sekunden Zeit, die Batterie zu wechseln.
-    Der Sensor bekommt dabei eine neue zufaellige ID - die Integration
-    erkennt sie automatisch und mappt sie auf den bestehenden Sensor.
+    After pressing, the configured window (default 120 s) is open to swap
+    the battery. The sensor picks a new random radio ID - the integration
+    detects it automatically and maps it onto the existing sensor.
     """
 
     _attr_icon = "mdi:battery-sync"
     _attr_has_entity_name = True
     _attr_translation_key = "battery_replace"
-    _attr_available = True  # Immer pressbar, auch wenn Sensor-Entities unavailable sind
+    _attr_available = True  # always pressable, even if sensor entities are unavailable
 
     def __init__(
         self,
@@ -91,13 +92,13 @@ class LaCrosseBatteryReplaceButton(ButtonEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Zeigt ob der Replace-Modus gerade aktiv ist."""
+        """Shows whether the replace mode is currently armed."""
         return {
             "replace_active": self._coordinator.is_battery_replace_active(self._sensor_id)
         }
 
     async def async_added_to_hass(self) -> None:
-        # Listener um den replace_active-Status in Echtzeit zu aktualisieren
+        # Listener to update the replace_active state in real time
         self._remove_listener = self._coordinator.async_add_listener(self._on_update)
 
     async def async_will_remove_from_hass(self) -> None:
@@ -109,5 +110,5 @@ class LaCrosseBatteryReplaceButton(ButtonEntity):
         self.async_write_ha_state()
 
     async def async_press(self) -> None:
-        """Aktiviert den Batteriewechsel-Modus fuer 120 Sekunden."""
+        """Arm the battery replacement mode (configured window)."""
         self._coordinator.start_battery_replace(self._sensor_id)

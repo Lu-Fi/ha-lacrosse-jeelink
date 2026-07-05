@@ -20,7 +20,7 @@ async def async_setup_entry(
 
 
 class JeeLinkDebugSwitch(SwitchEntity):
-    """Toggle verbose serial logging. Auto-turns off after 5 minutes."""
+    """Toggle verbose serial logging. Auto-off after the configured timeout."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "debug"

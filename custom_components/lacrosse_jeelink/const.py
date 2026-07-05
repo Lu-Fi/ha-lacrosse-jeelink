@@ -14,20 +14,22 @@ CONF_BATTERY_REPLACE_TIMEOUT = "battery_replace_timeout"
 CONF_DEBUG_TIMEOUT = "debug_timeout"
 CONF_NOTIFY_ENABLED = "notify_enabled"
 CONF_NOTIFY_ENTITY = "notify_entity"
-# Einzeln schaltbare Benachrichtigungstypen (alle Standard: an)
+# Individually switchable notification types (all default: on)
 CONF_NOTIFY_CONNECTION = "notify_connection"
 CONF_NOTIFY_DATA_TIMEOUT = "notify_data_timeout"
 CONF_NOTIFY_NEW_SENSOR = "notify_new_sensor"
 CONF_NOTIFY_BATTERY_LOW = "notify_battery_low"
 CONF_NOTIFY_BATTERY_REPLACED = "notify_battery_replaced"
-# Funkstille-Watchdog: Warnung, wenn trotz bestehender serieller Verbindung
-# so lange kein Funkpaket mehr geparst wurde (Minuten, 0 = aus)
+# Radio-silence watchdog: warn when no radio packet has been parsed for
+# this long despite an open serial connection (minutes, 0 = off)
 CONF_DATA_TIMEOUT = "data_timeout"
-# Automatisches Aufräumen: automatisch angelegte, vom Nutzer NICHT
-# umbenannte Sensoren entfernen, wenn sie so lange keine Daten mehr
-# gesendet haben (Stunden, 0 = aus). Fängt fremde/Nachbar-Sensoren ab,
-# die einmal reingefunkt haben und dann verschwunden sind.
+# Automatic cleanup: remove auto-discovered sensors the user never
+# touched when they have not sent data for this long (hours, 0 = off).
+# Catches stray/neighbour sensors that briefly reached the receiver.
 CONF_STALE_CLEANUP_HOURS = "stale_cleanup_hours"
+# Firmware init commands sent on connect (space-separated, FHEM-style
+# initCommands). Default cycles all three data rates every 10 seconds.
+CONF_INIT_COMMANDS = "init_commands"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 # No default serial port on purpose: paths like
@@ -40,6 +42,7 @@ DEFAULT_DEBUG_TIMEOUT = 300         # seconds until debug mode auto-disables
 DEFAULT_NOTIFY_ENTITY = ""          # empty = no notifications
 DEFAULT_DATA_TIMEOUT = 15           # minutes without any parsed packet -> warn (0 = off)
 DEFAULT_STALE_CLEANUP_HOURS = 0     # hours before auto-removing silent unnamed sensors (0 = off)
+DEFAULT_INIT_COMMANDS = "7m 10t"    # data-rate toggle mask 7, toggle every 10 s
 
 OUTLIER_CONFIRM_COUNT = 5  # default for CONF_OUTLIER_CONFIRM_COUNT
 

@@ -21,6 +21,7 @@ from .const import (
     CONF_BATTERY_REPLACE_TIMEOUT,
     CONF_DATA_TIMEOUT,
     CONF_DEBUG_TIMEOUT,
+    CONF_INIT_COMMANDS,
     CONF_NOTIFY_BATTERY_LOW,
     CONF_NOTIFY_BATTERY_REPLACED,
     CONF_NOTIFY_CONNECTION,
@@ -36,6 +37,7 @@ from .const import (
     DEFAULT_BATTERY_REPLACE_TIMEOUT,
     DEFAULT_DATA_TIMEOUT,
     DEFAULT_DEBUG_TIMEOUT,
+    DEFAULT_INIT_COMMANDS,
     DEFAULT_NOTIFY_ENTITY,
     DEFAULT_RECONNECT_DELAY,
     DEFAULT_SERIAL_TIMEOUT,
@@ -57,8 +59,8 @@ def _list_serial_ports() -> list[str]:
 
 
 def _port_selector(current: str | None) -> SelectSelector:
-    """Dropdown mit den erkannten seriellen Ports; eigene Eingabe erlaubt
-    (z.B. /dev/serial/by-id/... Symlinks, die pyserial nicht listet)."""
+    """Dropdown with the detected serial ports; custom input allowed
+    (e.g. /dev/serial/by-id/... symlinks that pyserial does not list)."""
     available = _list_serial_ports()
     if current and current not in available:
         available.insert(0, current)
@@ -72,7 +74,7 @@ def _port_selector(current: str | None) -> SelectSelector:
 
 
 class JeeLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Ersteinrichtung: serieller Port + Auto-Discovery."""
+    """Initial setup: serial port + auto discovery."""
 
     VERSION = 1
 
@@ -108,8 +110,8 @@ class JeeLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class JeeLinkOptionsFlow(config_entries.OptionsFlow):
-    """Einstellungen nach der Ersteinrichtung aendern (werden per Reload
-    sofort angewendet)."""
+    """Change settings after the initial setup (applied immediately via
+    an entry reload)."""
 
     def __init__(self, config_entry):
         self._entry = config_entry
@@ -163,14 +165,19 @@ class JeeLinkOptionsFlow(config_entries.OptionsFlow):
                 ): NumberSelector(
                     NumberSelectorConfig(min=60, max=1800, step=30, mode=NumberSelectorMode.BOX)
                 ),
-                # Funkstille-Watchdog (Minuten, 0 = aus)
+                # Firmware init commands (space-separated, FHEM-style)
+                vol.Required(
+                    CONF_INIT_COMMANDS,
+                    default=self._current(CONF_INIT_COMMANDS, DEFAULT_INIT_COMMANDS),
+                ): str,
+                # Radio-silence watchdog (minutes, 0 = off)
                 vol.Required(
                     CONF_DATA_TIMEOUT,
                     default=self._current(CONF_DATA_TIMEOUT, DEFAULT_DATA_TIMEOUT),
                 ): NumberSelector(
                     NumberSelectorConfig(min=0, max=1440, step=1, mode=NumberSelectorMode.BOX)
                 ),
-                # Automatisches Aufraeumen verwaister Auto-Sensoren (Stunden, 0 = aus)
+                # Automatic cleanup of stray auto-discovered sensors (hours, 0 = off)
                 vol.Required(
                     CONF_STALE_CLEANUP_HOURS,
                     default=self._current(
@@ -179,7 +186,7 @@ class JeeLinkOptionsFlow(config_entries.OptionsFlow):
                 ): NumberSelector(
                     NumberSelectorConfig(min=0, max=720, step=1, mode=NumberSelectorMode.BOX)
                 ),
-                # Benachrichtigungen: Hauptschalter + Ziel-Entity + Typen
+                # Notifications: master switch + target entity + types
                 vol.Required(
                     CONF_NOTIFY_ENABLED,
                     default=self._current(CONF_NOTIFY_ENABLED, True),
