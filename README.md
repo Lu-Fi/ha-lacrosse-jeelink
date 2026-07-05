@@ -78,7 +78,7 @@ Copy `custom_components/lacrosse_jeelink/` into your `config/custom_components/`
 
 | Entity | Description |
 |---|---|
-| Connected (`binary_sensor`, diagnostic) | Serial connection to the JeeLink stick is up. |
+| Connected (`binary_sensor`, diagnostic) | Serial connection to the JeeLink stick is up. Carries the detected firmware banner as a `firmware` attribute; it is also shown as the bridge device's firmware version (e.g. `LaCrosseITPlusReader.10.1s (RFM69 f:868300 r:17241)`). |
 | Radio silence (`binary_sensor`, problem, diagnostic) | On while the radio-silence watchdog is triggered (no packet parsed for the configured time despite an open connection). Use it in automations, e.g. to press the stick-reset button after prolonged silence. |
 | Stick reset (`button`) | Performs a DTR hardware reset of the stick (also done automatically on known firmware hangs). |
 | Debug mode (`switch`) | Enables verbose logging of every received telegram and every filter decision; auto-off after the configured timeout. |

@@ -2,6 +2,12 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.2] - 2026-07-05
+
+### Added
+
+- **Stick identification / firmware version**: the integration now requests the firmware banner on connect (`v` command, also emitted after every reset) and parses the `[LaCrosseITPlusReader…]` line — the same mechanism FHEM uses for its model/settings internals. The result (firmware name/version, radio module, frequency, data rate) is shown as the bridge device's **firmware version** and as a `firmware` attribute on the "Connected" sensor.
+
 ## [1.1.1] - 2026-07-05
 
 ### Fixed

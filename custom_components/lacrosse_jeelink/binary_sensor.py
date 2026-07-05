@@ -68,6 +68,10 @@ class JeeLinkConnectedSensor(BinarySensorEntity):
     def is_on(self) -> bool:
         return self._coordinator.connected
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"firmware": self._coordinator.firmware}
+
     async def async_added_to_hass(self) -> None:
         self._remove_listener = self._coordinator.async_add_listener(self._on_update)
 

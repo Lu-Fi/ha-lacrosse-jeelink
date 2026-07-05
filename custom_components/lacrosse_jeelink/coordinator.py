@@ -136,6 +136,11 @@ class JeeLinkCoordinator:
         self._last_stale_check = 0.0
 
         self.debug: bool = False
+        # Firmware-Kennung des Sticks (Banner-Zeile des LaCrosseITPlusReader-
+        # Sketches, z.B. "LaCrosseITPlusReader.10.1s (RFM69 f:868300 r:17241)").
+        # Kommt nach jedem Reset automatisch und auf das "v"-Kommando; wird
+        # als sw_version am Bridge-Geraet hinterlegt (wie FHEMs model/settings).
+        self.firmware: str | None = None
         # Verbindungsstatus fuer connected-Binary-Sensor + Benachrichtigungen
         self.connected: bool = False
         self._conn_notified_down = False
@@ -586,6 +591,16 @@ class JeeLinkCoordinator:
         except Exception as exc:
             _LOGGER.warning("DTR-Reset fehlgeschlagen: %s", exc)
 
+    @callback
+    def _async_apply_firmware(self) -> None:
+        """Traegt die erkannte Firmware als sw_version am Bridge-Geraet
+        nach (Analogie zu FHEMs model/settings Internals)."""
+        dev_reg = dr.async_get(self.hass)
+        device = dev_reg.async_get_device(identifiers={(DOMAIN, self._entry_id)})
+        if device:
+            dev_reg.async_update_device(device.id, sw_version=self.firmware)
+        self._notify_listeners()
+
     def _set_connected(self, connected: bool, reason: str = "") -> None:
         """Verbindungsstatus pflegen + Benachrichtigung bei Wechsel."""
         if connected == self.connected:
@@ -627,7 +642,10 @@ class JeeLinkCoordinator:
                 _LOGGER.info("Verbinde mit %s...", self.serial_port)
                 ser = serial.Serial(self.serial_port, 57600, timeout=self.serial_timeout)
                 self._dtr_reset(ser)
-                ser.write(b"7m\r10t\r")
+                # 7m/10t = Datenraten-Toggle, v = Versions-/Identifikations-
+                # Banner anfordern (kommt nach dem DTR-Reset meist auch von
+                # selbst - "v" macht es deterministisch).
+                ser.write(b"7m\r10t\rv\r")
                 _LOGGER.info("JeeLink initialisiert, lese Daten...")
                 self._set_connected(True)
                 # Baseline fuer den Funkstille-Watchdog: ab JETZT zaehlen,
@@ -655,6 +673,16 @@ class JeeLinkCoordinator:
                         _LOGGER.warning("Firmware: RFM12 hang - DTR-Reset")
                         self._dtr_reset(ser)
                         ser.write(b"7m\r10t\r")
+                        continue
+
+                    if line.startswith("[") and line.endswith("]"):
+                        fw = line[1:-1].strip()
+                        if fw and fw != self.firmware:
+                            self.firmware = fw
+                            _LOGGER.info("JeeLink Firmware erkannt: %s", fw)
+                            self.hass.loop.call_soon_threadsafe(
+                                self._async_apply_firmware
+                            )
                         continue
 
                     if line.startswith("OK 9"):
