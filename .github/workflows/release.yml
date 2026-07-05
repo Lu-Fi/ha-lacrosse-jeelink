@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+      - "*.*.*b*"
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog entry
+        id: changelog
+        run: |
+          VERSION="${{ github.ref_name }}"
+          BODY=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.body }}
+          prerelease: ${{ contains(github.ref_name, 'b') }}
