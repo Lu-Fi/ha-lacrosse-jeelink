@@ -22,3 +22,7 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # 'brands' erfordert einen Eintrag im home-assistant/brands Repo -
+          # fuer Custom-Repositories nicht noetig (Integration liefert ihr
+          # Brand-Icon selbst mit, HA >= 2026.3)
+          ignore: brands
