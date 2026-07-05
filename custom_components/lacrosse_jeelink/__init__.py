@@ -12,7 +12,6 @@ PLATFORMS = ["sensor", "binary_sensor", "button", "switch"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = JeeLinkCoordinator(hass, entry)
-    await coordinator.async_start()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -24,6 +23,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     preloaded = coordinator.preload_from_registry()
     if preloaded:
         coordinator._fire_discoveries(preloaded)
+
+    # Den seriellen Reader erst JETZT starten - nach Plattform-Setup und
+    # Preload. Startet er frueher, verpuffen Discoveries von Paketen, die
+    # im Fenster vor der Callback-Registrierung eintreffen: die Kanaele
+    # gelten dann als "bekannt", der Preload ueberspringt sie, und die
+    # Entities des Sensors bleiben bis zum naechsten Neustart unavailable.
+    await coordinator.async_start()
 
     # Options-Aenderungen (Timeouts, Notify, Port, ...) sofort anwenden,
     # indem der Eintrag neu geladen wird - kein HA-Neustart noetig.

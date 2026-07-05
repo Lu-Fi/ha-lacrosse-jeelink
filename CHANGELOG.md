@@ -2,6 +2,12 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.1] - 2026-07-05
+
+### Fixed
+
+- **Startup race left random sensors unavailable after a restart.** The serial reader thread was started before the entity platforms were set up. If a sensor's packet arrived in that window, its channels were marked as discovered while the discovery events fell on deaf ears (no callbacks registered yet) — the registry preload then skipped them as "already known", leaving all of that sensor's entities (including the battery-replaced button) unavailable until the next restart. The reader now starts only after platform setup and registry preload are complete.
+
 ## [1.1.0] - 2026-07-05
 
 First public release (HACS custom repository).
