@@ -18,6 +18,35 @@ Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and hu
 - Debug switch with automatic timeout for troubleshooting reception issues
 - Config UI in German and English; ships its own brand icon
 
+## Screenshots
+
+<table>
+<tr>
+<td align="center" width="50%">
+
+**Integration overview**
+
+<img src="docs/01-integration-overview.png" alt="Integration entry listing the LaCrosse JeeLink Bridge with 23 devices and 102 entities">
+
+</td>
+<td align="center" width="50%">
+
+**Bridge device page**
+
+<img src="docs/02-bridge-device-page.png" alt="Bridge device page with Debug-Modus/Stick-Reset controls, connection diagnostics and the list of connected sensors">
+
+</td>
+</tr>
+</table>
+
+**Sensor device page**
+
+<img src="docs/03-sensor-device-page.png" alt="Per-sensor device page with battery replacement button, temperature sensors, diagnostics and activity log" width="750">
+
+**Options dialog**
+
+<img src="docs/04-jeelink-optionen.png" alt="Options dialog: serial port, outlier confirmation, timeouts, firmware init commands and notification settings" width="450">
+
 ## Hardware
 
 Any board running the **LaCrosseITPlusReader sketch** (the firmware FHEM uses) works:
