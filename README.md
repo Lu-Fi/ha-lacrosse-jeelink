@@ -2,6 +2,10 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/release/Lu-Fi/ha-lacrosse-jeelink.svg)](https://github.com/Lu-Fi/ha-lacrosse-jeelink/releases)
+[![Downloads](https://img.shields.io/github/downloads/Lu-Fi/ha-lacrosse-jeelink/total.svg)](https://github.com/Lu-Fi/ha-lacrosse-jeelink/releases)
+[![Validate](https://github.com/Lu-Fi/ha-lacrosse-jeelink/actions/workflows/validate.yml/badge.svg)](https://github.com/Lu-Fi/ha-lacrosse-jeelink/actions/workflows/validate.yml)
+[![GitHub last commit](https://img.shields.io/github/last-commit/Lu-Fi/ha-lacrosse-jeelink.svg)](https://github.com/Lu-Fi/ha-lacrosse-jeelink/commits)
+[![License](https://img.shields.io/github/license/Lu-Fi/ha-lacrosse-jeelink.svg)](https://github.com/Lu-Fi/ha-lacrosse-jeelink/blob/main/LICENSE)
 
 Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and humidity sensors** received via a **JeeLink USB stick** (868 MHz, LaCrosse firmware) — fully local, no cloud, no FHEM required. The protocol handling is modelled on FHEM's proven `36_LaCrosse.pm`.
 
