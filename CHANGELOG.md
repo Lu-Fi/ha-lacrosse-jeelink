@@ -2,6 +2,12 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.1] - 2026-07-08
+
+### Fixed
+
+- **Manual device removal was impossible.** Home Assistant refused to delete any device belonging to this integration ("Config entry does not support device removal"), including harmless empty device entries left behind after a sensor's entities were removed by hand. Added `async_remove_config_entry_device()` — safe for all devices here since every per-sensor device (LaCrosse, EMT7110, LevelSender) is dynamically discovered from radio packets and simply reappears if the sensor sends another packet.
+
 ## [1.4.0] - 2026-07-08
 
 ### Added
