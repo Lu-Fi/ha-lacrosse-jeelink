@@ -13,6 +13,7 @@ Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and hu
 
 - Direct serial connection to the JeeLink stick (57600 baud, `OK 9` telegrams)
 - **Automatic sensor discovery**: new sensors appear as devices with temperature, humidity (if present), calculated **dew point** (Magnus formula, identical to FHEM) and a battery-low binary sensor
+- **EMT7110** (LaCrosse power/energy plug) and **LevelSender** (DIY tank/cistern fill-level sender) telegrams are decoded too — the LaCrosseITPlusReader sketch already sends them over the same serial port. Each gets its own device and its own ID namespace, so they never show up mislabelled as a LaCrosse weather sensor. See [Entities](#entities) below.
 - Second temperature channel (`temperature2`) for sensors with an external probe
 - **Outlier filtering**: absolute limits (−50…60 °C, 1…100 %) plus delta filters (10 K / 20 % jumps); a genuine jump is accepted after N consecutive identical readings (configurable)
 - **Discovery threshold** (like FHEM's `autoCreateThreshold`): new sensors are only created after N packets within T seconds (default 2/120 s) — one-shot decode flukes and fringe receptions never clutter the registry
@@ -131,17 +132,53 @@ Copy `custom_components/lacrosse_jeelink/` into your `config/custom_components/`
 | Last received (`sensor`, timestamp, diagnostic) | When the last radio packet of this sensor was received — counts every parsed packet, even ones rejected by the outlier filter. Quantized to full minutes to keep database writes low. Useful for detecting dead sensors (empty battery, out of range) in automations. |
 | Battery replaced (`button`) | Arms the replacement mode: swap the battery within the window and the new radio ID is aliased to this device. The button's `replace_active` attribute shows whether the window is currently open. |
 
+### EMT7110 device ("LaCrosse EMT7110 &lt;id&gt;")
+
+Decoded from `OK EMT7110 …` telegrams on the same serial port. Own device, own ID namespace (`emt_<id>`) — not shown as a LaCrosse weather sensor.
+
+| Entity | Description |
+|---|---|
+| Voltage (`sensor`, V) | Mains voltage. |
+| Current (`sensor`, mA) | Current draw. |
+| Power (`sensor`, W) | Instantaneous power. |
+| Energy (`sensor`, kWh) | Accumulated energy (monotonically increasing counter). |
+| Consumer connected (`binary_sensor`) | On = a consumer is drawing power through the plug. |
+| Last received (`sensor`, timestamp, diagnostic) | Same semantics as for LaCrosse sensors. |
+
+### LevelSender device ("LevelSender &lt;id&gt;")
+
+Decoded from `OK LS …` telegrams (a DIY/community tank/cistern fill-level sender, not a LaCrosse product). Own device, own ID namespace (`ls_<id>`) — the sender's 4-bit ID would otherwise be indistinguishable from a LaCrosse IT+ radio ID.
+
+| Entity | Description |
+|---|---|
+| Level (`sensor`, cm) | Fill level of the tank/cistern. |
+| Temperature (`sensor`, °C) | Filtered through the same outlier check as LaCrosse temperature sensors. |
+| Voltage (`sensor`, V) | Sender battery voltage. |
+| Last received (`sensor`, timestamp, diagnostic) | Same semantics as for LaCrosse sensors. |
+
 ## Notifications
 
 If a notify entity is configured (and the master switch is on), the integration sends messages for: **connection lost / restored** (serial errors), **radio silence / data resumed** (no packets parsed for the configured time despite an open serial connection), **new sensor discovered** (with first readings), **battery low** (once per low-phase per sensor), and **battery replacement detected** (old ID → new radio ID). Every type can be switched on/off individually in the options. Message language follows the Home Assistant system language (German/English).
 
-## Protocol notes (OK 9 telegram)
+## Protocol notes
 
 ```
 OK 9 <id> <flags> <tempMSB> <tempLSB> <hum>
         flags: bit7 = new battery, bits4-6 = type, bits0-3 = channel (2 = probe2)
         temp  = (MSB*256 + LSB − 1000) / 10 °C
         hum   : bit7 = battery low, bits0-6 = humidity (1–100; >100 = no humidity sensor)
+
+OK EMT7110 <idMSB> <idLSB> <voltMSB> <voltLSB> <curMSB> <curLSB> <powMSB> <powLSB> <accMSB> <accLSB> <flags>
+        volt  = (MSB*256 + LSB) / 10   V
+        cur   =  MSB*256 + LSB         mA
+        pow   =  MSB*256 + LSB         W
+        acc   = (MSB*256 + LSB) / 100  kWh (accumulated energy)
+        flags: bit0 = consumer connected, bit1 = pairing telegram (discarded)
+
+OK LS <id> 0 <levelMSB> <levelLSB> <tempMSB> <tempLSB> <voltByte>
+        level = (MSB*256 + LSB − 1000) / 10   cm
+        temp  = (MSB*256 + LSB − 1000) / 10   °C
+        volt  =  voltByte / 10                 V
 ```
 
 ## Troubleshooting

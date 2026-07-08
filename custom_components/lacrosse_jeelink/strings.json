@@ -79,6 +79,21 @@
       },
       "last_seen": {
         "name": "Last received"
+      },
+      "voltage": {
+        "name": "Voltage"
+      },
+      "current": {
+        "name": "Current"
+      },
+      "power": {
+        "name": "Power"
+      },
+      "energy": {
+        "name": "Energy"
+      },
+      "level": {
+        "name": "Level"
       }
     },
     "binary_sensor": {
@@ -87,6 +102,9 @@
       },
       "connected": {
         "name": "Connected"
+      },
+      "consumer_connected": {
+        "name": "Consumer connected"
       },
       "radio_silence": {
         "name": "Radio silence"
