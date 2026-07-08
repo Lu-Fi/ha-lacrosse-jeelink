@@ -26,32 +26,21 @@ Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and hu
 
 ## Screenshots
 
-<table>
-<tr>
-<td align="center" width="50%">
-
 **Integration overview**
 
-<img src="docs/01-integration-overview.png" alt="Integration entry listing the LaCrosse JeeLink Bridge with 23 devices and 102 entities">
-
-</td>
-<td align="center" width="50%">
+![Integration entry listing the LaCrosse JeeLink Bridge with 23 devices and 102 entities](https://raw.githubusercontent.com/Lu-Fi/ha-lacrosse-jeelink/main/docs/01-integration-overview.png)
 
 **Bridge device page**
 
-<img src="docs/02-bridge-device-page.png" alt="Bridge device page with Debug-Modus/Stick-Reset controls, connection diagnostics and the list of connected sensors">
-
-</td>
-</tr>
-</table>
+![Bridge device page with Debug-Modus/Stick-Reset controls, connection diagnostics and the list of connected sensors](https://raw.githubusercontent.com/Lu-Fi/ha-lacrosse-jeelink/main/docs/02-bridge-device-page.png)
 
 **Sensor device page**
 
-<img src="docs/03-sensor-device-page.png" alt="Per-sensor device page with battery replacement button, temperature sensors, diagnostics and activity log" width="750">
+![Per-sensor device page with battery replacement button, temperature sensors, diagnostics and activity log](https://raw.githubusercontent.com/Lu-Fi/ha-lacrosse-jeelink/main/docs/03-sensor-device-page.png)
 
 **Options dialog**
 
-<img src="docs/04-jeelink-optionen.png" alt="Options dialog: serial port, outlier confirmation, timeouts, firmware init commands and notification settings" width="450">
+![Options dialog: serial port, outlier confirmation, timeouts, firmware init commands and notification settings](https://raw.githubusercontent.com/Lu-Fi/ha-lacrosse-jeelink/main/docs/04-jeelink-optionen.png)
 
 ## Hardware
 
