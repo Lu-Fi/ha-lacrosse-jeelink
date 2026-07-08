@@ -48,3 +48,20 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id)
     return unloaded
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ConfigEntry, device_entry
+) -> bool:
+    """Allow manual removal of a device via Settings -> Devices (or the API).
+
+    All per-sensor devices (LaCrosse, EMT7110, LevelSender) are dynamically
+    discovered from radio packets - none of them are tied to fixed config
+    entry data, so deleting one is always safe: the coordinator simply
+    rediscovers the sensor (as a fresh device) if it ever sends another
+    packet. Without this hook Home Assistant refuses any device deletion
+    for this integration with "Config entry does not support device
+    removal", even for empty/orphaned device entries left behind after
+    their entities were removed.
+    """
+    return True
