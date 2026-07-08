@@ -1,4 +1,4 @@
-"""Battery binary sensors — dynamically discovered."""
+"""Battery and EMT7110 "consumer connected" binary sensors — dynamically discovered."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
@@ -31,11 +31,12 @@ async def async_setup_entry(
 
     @callback
     def _on_discovery(discoveries: list[SensorDiscovery]) -> None:
-        entities = [
-            LaCrosseBatterySensor(coordinator, entry, disc)
-            for disc in discoveries
-            if disc.channel == "battery"
-        ]
+        entities = []
+        for disc in discoveries:
+            if disc.channel == "battery":
+                entities.append(LaCrosseBatterySensor(coordinator, entry, disc))
+            elif disc.channel == "connected":
+                entities.append(JeeLinkConsumerConnectedSensor(coordinator, entry, disc))
         if entities:
             async_add_entities(entities)
 
@@ -112,6 +113,52 @@ class JeeLinkRadioSilenceSensor(BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return self._coordinator.data_stale
+
+    async def async_added_to_hass(self) -> None:
+        self._remove_listener = self._coordinator.async_add_listener(self._on_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._remove_listener:
+            self._remove_listener()
+
+    @callback
+    def _on_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class JeeLinkConsumerConnectedSensor(BinarySensorEntity):
+    """EMT7110: on = a consumer is connected to / drawing power through
+    the plug."""
+
+    _attr_device_class = BinarySensorDeviceClass.PLUG
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_translation_key = "consumer_connected"
+
+    def __init__(
+        self,
+        coordinator: JeeLinkCoordinator,
+        entry: ConfigEntry,
+        disc: SensorDiscovery,
+    ) -> None:
+        self._coordinator = coordinator
+        self._disc = disc
+        self._entry = entry
+        self._state_key = (disc.sensor_id, "connected")
+        self._remove_listener = None
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._disc.sensor_id}_connected"
+
+    @property
+    def device_info(self):
+        return self._coordinator.get_sensor_device_info(self._disc.sensor_id)
+
+    @property
+    def is_on(self) -> bool | None:
+        val = self._coordinator.sensor_states.get(self._state_key)
+        return bool(val) if val is not None else None
 
     async def async_added_to_hass(self) -> None:
         self._remove_listener = self._coordinator.async_add_listener(self._on_update)

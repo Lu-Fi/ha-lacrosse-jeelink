@@ -1,4 +1,6 @@
-"""Temperature, humidity, dew point and last-seen sensors - dynamically discovered."""
+"""Temperature, humidity, dew point, last-seen, and (for the EMT7110 /
+LevelSender protocols carried by the same stick) voltage/current/power/
+energy/level sensors - all dynamically discovered."""
 from __future__ import annotations
 
 import datetime
@@ -37,6 +39,16 @@ async def async_setup_entry(
                 entities.append(LaCrosseDewpointSensor(coordinator, entry, disc.sensor_id))
             elif disc.channel == "last_seen":
                 entities.append(LaCrosseLastSeenSensor(coordinator, entry, disc.sensor_id))
+            elif disc.channel == "voltage":
+                entities.append(JeeLinkVoltageSensor(coordinator, entry, disc.sensor_id))
+            elif disc.channel == "current":
+                entities.append(JeeLinkCurrentSensor(coordinator, entry, disc.sensor_id))
+            elif disc.channel == "power":
+                entities.append(JeeLinkPowerSensor(coordinator, entry, disc.sensor_id))
+            elif disc.channel == "energy":
+                entities.append(JeeLinkEnergySensor(coordinator, entry, disc.sensor_id))
+            elif disc.channel == "level":
+                entities.append(JeeLinkLevelSensor(coordinator, entry, disc.sensor_id))
         if entities:
             async_add_entities(entities)
 
@@ -51,7 +63,9 @@ async def async_setup_entry(
 
 
 class _LaCrosseBase(RestoreSensor):
-    """Common base for all LaCrosse sensor entities."""
+    """Common base for all discovered sensor entities (LaCrosse IT+ as well
+    as EMT7110/LevelSender - sensor_id is int for the former, str
+    ("emt_<id>"/"ls_<id>") for the latter, see coordinator.SensorDiscovery)."""
 
     _attr_should_poll = False
     _attr_has_entity_name = True  # name = device name + entity name (e.g. "Terrasse Temperature")
@@ -60,7 +74,7 @@ class _LaCrosseBase(RestoreSensor):
         self,
         coordinator: JeeLinkCoordinator,
         entry: ConfigEntry,
-        sensor_id: int,
+        sensor_id: int | str,
         channel: str,
     ) -> None:
         self._coordinator = coordinator
@@ -181,3 +195,90 @@ class LaCrosseDewpointSensor(_LaCrosseBase):
     @property
     def unique_id(self) -> str:
         return f"{self._entry.entry_id}_{self._sensor_id}_dewpoint"
+
+
+# ── EMT7110 (power/energy plug) ─────────────────────────────────────────────
+
+
+class JeeLinkVoltageSensor(_LaCrosseBase):
+    """Mains voltage (EMT7110) or sender battery voltage (LevelSender)."""
+
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "V"
+    _attr_translation_key = "voltage"
+
+    def __init__(self, coordinator, entry, sensor_id: str):
+        super().__init__(coordinator, entry, sensor_id, "voltage")
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._sensor_id}_voltage"
+
+
+class JeeLinkCurrentSensor(_LaCrosseBase):
+    """EMT7110: current draw."""
+
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "mA"
+    _attr_translation_key = "current"
+
+    def __init__(self, coordinator, entry, sensor_id: str):
+        super().__init__(coordinator, entry, sensor_id, "current")
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._sensor_id}_current"
+
+
+class JeeLinkPowerSensor(_LaCrosseBase):
+    """EMT7110: instantaneous power."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "W"
+    _attr_translation_key = "power"
+
+    def __init__(self, coordinator, entry, sensor_id: str):
+        super().__init__(coordinator, entry, sensor_id, "power")
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._sensor_id}_power"
+
+
+class JeeLinkEnergySensor(_LaCrosseBase):
+    """EMT7110: accumulated energy (monotonically increasing counter)."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_translation_key = "energy"
+
+    def __init__(self, coordinator, entry, sensor_id: str):
+        super().__init__(coordinator, entry, sensor_id, "energy")
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._sensor_id}_energy"
+
+
+# ── LevelSender (tank / cistern fill level) ─────────────────────────────────
+
+
+class JeeLinkLevelSensor(_LaCrosseBase):
+    """LevelSender: fill level of the tank/cistern."""
+
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "cm"
+    _attr_icon = "mdi:waves-arrow-up"
+    _attr_translation_key = "level"
+
+    def __init__(self, coordinator, entry, sensor_id: str):
+        super().__init__(coordinator, entry, sensor_id, "level")
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._sensor_id}_level"

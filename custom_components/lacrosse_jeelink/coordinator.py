@@ -91,7 +91,11 @@ def _dewpoint(temp: float, hum: float) -> float:
 @dataclass
 class SensorDiscovery:
     """Describes a newly discovered sensor channel."""
-    sensor_id: int
+    # int for LaCrosse IT+ sensors (8-bit radio ID); str ("emt_<id>",
+    # "ls_<id>") for the other protocols carried by the same LaCrosseITPlusReader
+    # sketch (EMT7110, LevelSender) - kept in their own ID namespace so they
+    # can never collide with a LaCrosse IT+ radio ID.
+    sensor_id: int | str
     channel: str   # "temperature" | "temperature2" | "humidity" | "battery" | ...
 
 
@@ -159,7 +163,7 @@ class JeeLinkCoordinator:
         # Candidate counter for the threshold: sensor_id -> (first_ts, count).
         # Bounded by the 8-bit radio ID space; entries reset themselves when
         # the window expires.
-        self._discovery_candidates: dict[int, tuple[float, int]] = {}
+        self._discovery_candidates: dict[int | str, tuple[float, int]] = {}
 
         self.debug: bool = False
         # Firmware identification of the stick (banner line of the
@@ -175,13 +179,15 @@ class JeeLinkCoordinator:
         self._battery_notified: set[int] = set()
 
         # sensor_id -> set of channels already created as entities
-        self._discovered: dict[int, set[str]] = {}
+        # (sensor_id is int for LaCrosse IT+, str "emt_<id>"/"ls_<id>" for
+        # EMT7110/LevelSender - see SensorDiscovery)
+        self._discovered: dict[int | str, set[str]] = {}
 
         # (sensor_id, channel) -> current value
-        self.sensor_states: dict[tuple[int, str], object] = {}
+        self.sensor_states: dict[tuple[int | str, str], object] = {}
 
         # Cache for outlier checking
-        self._cache: dict[tuple[int, str], object] = {}
+        self._cache: dict[tuple[int | str, str], object] = {}
 
         # Outlier confirmation: key -> (value, consecutive_count)
         self._outlier_counter: dict[tuple, tuple] = {}
@@ -205,7 +211,7 @@ class JeeLinkCoordinator:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._debug_cancel = None
-        self._sensor_device_infos: dict[int, DeviceInfo] = {}
+        self._sensor_device_infos: dict[int | str, DeviceInfo] = {}
 
         # Bridge device (for the reset button and debug switch). The model
         # is deliberately generic: what matters is the LaCrosseITPlusReader
@@ -306,17 +312,60 @@ class JeeLinkCoordinator:
 
         self.hass.loop.call_soon_threadsafe(_save)
 
-    def get_sensor_device_info(self, sensor_id: int) -> DeviceInfo:
-        """DeviceInfo for a single LaCrosse sensor, linked to the bridge."""
+    @staticmethod
+    def _sensor_kind(sensor_id: int | str) -> str:
+        """Which protocol a discovered sensor_id belongs to. Used to pick the
+        right device info (name/manufacturer/model) - EMT7110 and
+        LevelSender are carried by the same LaCrosseITPlusReader sketch and
+        serial port, but are not LaCrosse IT+ weather sensors and must not
+        be presented as such."""
+        if isinstance(sensor_id, str):
+            if sensor_id.startswith("emt_"):
+                return "emt7110"
+            if sensor_id.startswith("ls_"):
+                return "levelsender"
+        return "lacrosse"
+
+    def get_sensor_device_info(self, sensor_id: int | str) -> DeviceInfo:
+        """DeviceInfo for a single discovered sensor, linked to the bridge.
+
+        sensor_id is int for LaCrosse IT+ sensors and str ("emt_<id>",
+        "ls_<id>") for EMT7110/LevelSender - each protocol gets its own
+        device name/manufacturer/model so they don't show up mislabelled
+        as "LaCrosse" sensors.
+        """
         if sensor_id not in self._sensor_device_infos:
-            self._sensor_device_infos[sensor_id] = DeviceInfo(
-                identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")},
-                name=f"LaCrosse Sensor {sensor_id}",
-                manufacturer="LaCrosse Technology",
-                model="IT+ Sensor",
-                serial_number=str(sensor_id),
-                via_device=(DOMAIN, self._entry_id),
-            )
+            kind = self._sensor_kind(sensor_id)
+            if kind == "emt7110":
+                raw_id = sensor_id.split("_", 1)[1]
+                info = DeviceInfo(
+                    identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")},
+                    name=f"LaCrosse EMT7110 {raw_id}",
+                    manufacturer="LaCrosse Technology",
+                    model="EMT7110 Energy Sensor",
+                    serial_number=raw_id,
+                    via_device=(DOMAIN, self._entry_id),
+                )
+            elif kind == "levelsender":
+                raw_id = sensor_id.split("_", 1)[1]
+                info = DeviceInfo(
+                    identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")},
+                    name=f"LevelSender {raw_id}",
+                    manufacturer="DIY / LevelSender",
+                    model="Fill-Level Sensor",
+                    serial_number=raw_id,
+                    via_device=(DOMAIN, self._entry_id),
+                )
+            else:
+                info = DeviceInfo(
+                    identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")},
+                    name=f"LaCrosse Sensor {sensor_id}",
+                    manufacturer="LaCrosse Technology",
+                    model="IT+ Sensor",
+                    serial_number=str(sensor_id),
+                    via_device=(DOMAIN, self._entry_id),
+                )
+            self._sensor_device_infos[sensor_id] = info
         return self._sensor_device_infos[sensor_id]
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -366,6 +415,17 @@ class JeeLinkCoordinator:
             ("_humidity", "humidity"),
             ("_last_seen", "last_seen"),
             ("_battery", "battery"),
+            # EMT7110 / LevelSender channels (see _parse_emt7110_line /
+            # _parse_levelsender_line) - their sensor_id is the string
+            # "emt_<id>"/"ls_<id>" itself, so the int() below fails and we
+            # fall back to keeping it as a string, e.g. rest="emt_1234_power"
+            # -> sensor_id "emt_1234".
+            ("_voltage", "voltage"),
+            ("_current", "current"),
+            ("_power", "power"),
+            ("_energy", "energy"),
+            ("_connected", "connected"),
+            ("_level", "level"),
         )
         discoveries: list[SensorDiscovery] = []
         for entity_entry in known_entries:
@@ -375,10 +435,13 @@ class JeeLinkCoordinator:
             rest = uid[len(prefix):]
             for suffix, channel in suffix_to_channel:
                 if rest.endswith(suffix):
+                    raw = rest[: -len(suffix)]
                     try:
-                        sensor_id = int(rest[: -len(suffix)])
+                        sensor_id = int(raw)
                     except ValueError:
-                        break
+                        if not raw:
+                            break
+                        sensor_id = raw  # str-namespaced id (emt_/ls_ kinds)
                     known = self._discovered.setdefault(sensor_id, set())
                     if channel not in known:
                         known.add(channel)
@@ -422,7 +485,7 @@ class JeeLinkCoordinator:
                 "(serial connection is up)",
             )
 
-    def _last_seen_epoch(self, sensor_id: int) -> float | None:
+    def _last_seen_epoch(self, sensor_id: int | str) -> float | None:
         """Timestamp of the last packet as epoch seconds. Depending on the
         source the value may be an epoch (live), datetime or ISO string
         (restored)."""
@@ -461,7 +524,7 @@ class JeeLinkCoordinator:
             last = self._last_seen_epoch(sensor_id)
             if last is None:
                 _LOGGER.debug(
-                    "Stale cleanup: sensor %d kept (no last-seen timestamp)",
+                    "Stale cleanup: sensor %s kept (no last-seen timestamp)",
                     sensor_id,
                 )
                 continue
@@ -472,7 +535,7 @@ class JeeLinkCoordinator:
             )
             if device and (device.name_by_user or device.area_id or device.labels):
                 _LOGGER.debug(
-                    "Stale cleanup: sensor %d kept (device customised: "
+                    "Stale cleanup: sensor %s kept (device customised: "
                     "name_by_user=%s, area=%s, labels=%s)",
                     sensor_id, device.name_by_user, device.area_id, device.labels,
                 )
@@ -506,7 +569,7 @@ class JeeLinkCoordinator:
                     customised.append(f"{reg_entry.entity_id} ({reason})")
             if customised:
                 _LOGGER.debug(
-                    "Stale cleanup: sensor %d kept (customised entities: %s)",
+                    "Stale cleanup: sensor %s kept (customised entities: %s)",
                     sensor_id, customised,
                 )
                 continue  # at least one entity customised -> keep
@@ -533,7 +596,7 @@ class JeeLinkCoordinator:
                 self._cache.pop(key, None)
 
             _LOGGER.info(
-                "LaCrosse sensor %d removed automatically: no data for more "
+                "Sensor %s removed automatically: no data for more "
                 "than %d h and never customised (stale_cleanup_hours)",
                 sensor_id, self.stale_cleanup_hours,
             )
@@ -760,6 +823,10 @@ class JeeLinkCoordinator:
 
                     if line.startswith("OK 9"):
                         self._parse_line(line)
+                    elif line.startswith("OK EMT7110"):
+                        self._parse_emt7110_line(line)
+                    elif line.startswith("OK LS"):
+                        self._parse_levelsender_line(line)
 
             except Exception as exc:
                 _LOGGER.error(
@@ -777,6 +844,60 @@ class JeeLinkCoordinator:
                     time.sleep(0.5)
 
     # ── Protocol parsing (as per 36_LaCrosse.pm) ───────────────────────────────
+    #
+    # The LaCrosseITPlusReader sketch running on the stick also decodes two
+    # other telegram families on the same serial port: EMT7110 (LaCrosse
+    # power/energy plug) and LevelSender (DIY tank/cistern fill-level
+    # sender). Both are parsed below and kept in their own ID namespace
+    # ("emt_<id>" / "ls_<id>") - see SensorDiscovery and
+    # get_sensor_device_info() - so they never collide with a LaCrosse IT+
+    # radio ID and never show up mislabelled as a "LaCrosse" sensor.
+
+    def _mark_packet_received(self) -> None:
+        """Feed the radio-silence watchdog and send the all-clear if needed.
+
+        Shared by every protocol parser below: a successfully decoded
+        packet of ANY kind (LaCrosse, EMT7110, LevelSender) counts as radio
+        activity for the watchdog.
+        """
+        self.last_data_ts = time.time()
+        if self._data_timeout_notified:
+            self._data_timeout_notified = False
+            self.hass.loop.call_soon_threadsafe(self._notify_listeners)
+            self._notify_user(
+                "data_timeout",
+                "JeeLink: Funkdaten werden wieder empfangen",
+                "JeeLink: radio data is coming in again",
+            )
+
+    def _passes_discovery_threshold(self, resolved_id: int | str) -> bool:
+        """Like FHEM's autoCreateThreshold: a brand-new sensor is only
+        created after discovery_min_packets packets within
+        discovery_window_sec seconds. Shared by all protocol parsers.
+        Returns False while the candidate hasn't reached the threshold yet
+        (caller should stop processing this packet in that case).
+        """
+        if not (
+            self.auto_add
+            and self.discovery_min_packets > 1
+            and resolved_id not in self._discovered
+        ):
+            return True
+        now = time.time()
+        first_ts, count = self._discovery_candidates.get(resolved_id, (now, 0))
+        if now - first_ts > self.discovery_window_sec:
+            first_ts, count = now, 0  # window expired -> start over
+        count += 1
+        if count < self.discovery_min_packets:
+            self._discovery_candidates[resolved_id] = (first_ts, count)
+            self._debug_log(
+                f"sensor {resolved_id}: discovery threshold "
+                f"{count}/{self.discovery_min_packets} within "
+                f"{self.discovery_window_sec}s - not created yet"
+            )
+            return False
+        self._discovery_candidates.pop(resolved_id, None)
+        return True
 
     def _parse_line(self, line: str) -> None:
         """Parse a single OK-9 telegram.
@@ -793,16 +914,7 @@ class JeeLinkCoordinator:
             if len(parts) < 6:
                 return
 
-            # Feed the radio-silence watchdog + send the all-clear if needed
-            self.last_data_ts = time.time()
-            if self._data_timeout_notified:
-                self._data_timeout_notified = False
-                self.hass.loop.call_soon_threadsafe(self._notify_listeners)
-                self._notify_user(
-                    "data_timeout",
-                    "JeeLink: Funkdaten werden wieder empfangen",
-                    "JeeLink: radio data is coming in again",
-                )
+            self._mark_packet_received()
 
             sensor_id = int(parts[2])
             flags     = int(parts[3])
@@ -879,28 +991,10 @@ class JeeLinkCoordinator:
             # real sensor passes within seconds - one-shot decode flukes and
             # fringe receptions never make it into the registry. Aliased IDs
             # (battery replacement) resolve to a known sensor and are not
-            # affected.
-            if (
-                self.auto_add
-                and self.discovery_min_packets > 1
-                and resolved_id not in self._discovered
-            ):
-                now = time.time()
-                first_ts, count = self._discovery_candidates.get(
-                    resolved_id, (now, 0)
-                )
-                if now - first_ts > self.discovery_window_sec:
-                    first_ts, count = now, 0  # window expired -> start over
-                count += 1
-                if count < self.discovery_min_packets:
-                    self._discovery_candidates[resolved_id] = (first_ts, count)
-                    self._debug_log(
-                        f"sensor {resolved_id}: discovery threshold "
-                        f"{count}/{self.discovery_min_packets} within "
-                        f"{self.discovery_window_sec}s - not created yet"
-                    )
-                    return
-                self._discovery_candidates.pop(resolved_id, None)
+            # affected. Shared with EMT7110/LevelSender via
+            # _passes_discovery_threshold().
+            if not self._passes_discovery_threshold(resolved_id):
+                return
 
             # Which channels are new for this sensor?
             temp_channel = "temperature2" if is_probe2 else "temperature"
@@ -997,6 +1091,166 @@ class JeeLinkCoordinator:
 
         except (IndexError, ValueError) as exc:
             _LOGGER.error("Parse error '%s': %s", line, exc)
+
+    # ── EMT7110 (LaCrosse power/energy plug) ────────────────────────────────
+
+    def _parse_emt7110_line(self, line: str) -> None:
+        """Parse an EMT7110 telegram (LaCrosseITPlusReader EMT7110.cpp).
+
+        Format:
+          OK EMT7110 <idMSB> <idLSB> <voltMSB> <voltLSB> <curMSB> <curLSB>
+                     <powMSB> <powLSB> <accMSB> <accLSB> <flags>
+            volt  = (MSB*256+LSB) / 10   V
+            cur   =  MSB*256+LSB         mA
+            pow   =  MSB*256+LSB         W
+            acc   = (MSB*256+LSB) / 100  kWh (accumulated energy)
+            flags: bit0 = consumer connected, bit1 = pairing telegram
+                   (no real measurement data - discarded)
+
+        Not a LaCrosse IT+ weather sensor, so it gets its own "emt_<id>" ID
+        namespace and its own device info (see get_sensor_device_info) -
+        the 16-bit EMT7110 ID would otherwise be indistinguishable from,
+        and could collide with, an 8-bit LaCrosse radio ID.
+        """
+        try:
+            parts = line.split()
+            if len(parts) < 13:
+                return
+
+            self._mark_packet_received()
+
+            raw_id = (int(parts[2]) << 8) | int(parts[3])
+            flags = int(parts[12])
+            if flags & 0x02:
+                # Pairing telegram - no measurement data to update
+                return
+            connected = bool(flags & 0x01)
+
+            voltage = ((int(parts[4]) << 8) | int(parts[5])) / 10.0
+            current = (int(parts[6]) << 8) | int(parts[7])
+            power = (int(parts[8]) << 8) | int(parts[9])
+            energy = ((int(parts[10]) << 8) | int(parts[11])) / 100.0
+
+            resolved_id = f"emt_{raw_id}"
+
+            self._debug_log(
+                f"raw={line} | EMT7110 id={resolved_id} V={voltage} "
+                f"mA={current} W={power} kWh={energy} connected={connected}"
+            )
+
+            if not self._passes_discovery_threshold(resolved_id):
+                return
+
+            new_discoveries: list[SensorDiscovery] = []
+            was_known = resolved_id in self._discovered
+            known = self._discovered.setdefault(resolved_id, set())
+
+            if self.auto_add:
+                for channel in (
+                    "voltage", "current", "power", "energy", "connected", "last_seen",
+                ):
+                    if channel not in known:
+                        known.add(channel)
+                        new_discoveries.append(SensorDiscovery(resolved_id, channel))
+
+                if new_discoveries:
+                    self.hass.loop.call_soon_threadsafe(
+                        self._fire_discoveries, new_discoveries
+                    )
+                    if not was_known:
+                        self._notify_user(
+                            "new_sensor",
+                            f"LaCrosse: neuer EMT7110-Zähler {raw_id} erkannt "
+                            f"({power} W, {voltage} V)",
+                            f"LaCrosse: new EMT7110 meter {raw_id} discovered "
+                            f"({power} W, {voltage} V)",
+                        )
+
+            self._update((resolved_id, "voltage"), round(voltage, 1))
+            self._update((resolved_id, "current"), current)
+            self._update((resolved_id, "power"), power)
+            self._update((resolved_id, "energy"), round(energy, 2))
+            self._update((resolved_id, "connected"), connected)
+            self._update((resolved_id, "last_seen"), int(time.time() // 60 * 60))
+
+        except (IndexError, ValueError) as exc:
+            _LOGGER.error("EMT7110 parse error '%s': %s", line, exc)
+
+    # ── LevelSender (DIY tank/cistern fill-level sender) ───────────────────
+
+    def _parse_levelsender_line(self, line: str) -> None:
+        """Parse a LevelSender telegram (LaCrosseITPlusReader LevelSenderLib.cpp).
+
+        Format:
+          OK LS <id> 0 <levelMSB> <levelLSB> <tempMSB> <tempLSB> <voltByte>
+            level = (MSB*256+LSB - 1000) / 10   cm
+            temp  = (MSB*256+LSB - 1000) / 10   degC
+            volt  =  voltByte / 10               V
+
+        Not a LaCrosse product (a DIY/community sender), and its ID space is
+        only 4 bit (0-15) - would otherwise silently collide with a
+        LaCrosse IT+ sensor of the same radio ID. Gets its own "ls_<id>" ID
+        namespace and device info instead.
+        """
+        try:
+            parts = line.split()
+            if len(parts) < 9:
+                return
+
+            self._mark_packet_received()
+
+            raw_id = int(parts[2])
+            level_raw = (int(parts[4]) << 8) | int(parts[5])
+            level = (level_raw - 1000) / 10.0
+            temp_raw = (int(parts[6]) << 8) | int(parts[7])
+            temperature = round((temp_raw - 1000) / 10.0, 1)
+            voltage = int(parts[8]) / 10.0
+
+            resolved_id = f"ls_{raw_id}"
+
+            self._debug_log(
+                f"raw={line} | LevelSender id={resolved_id} level={level}cm "
+                f"T={temperature}degC V={voltage}"
+            )
+
+            if not self._passes_discovery_threshold(resolved_id):
+                return
+
+            new_discoveries: list[SensorDiscovery] = []
+            was_known = resolved_id in self._discovered
+            known = self._discovered.setdefault(resolved_id, set())
+
+            if self.auto_add:
+                for channel in ("level", "temperature", "voltage", "last_seen"):
+                    if channel not in known:
+                        known.add(channel)
+                        new_discoveries.append(SensorDiscovery(resolved_id, channel))
+
+                if new_discoveries:
+                    self.hass.loop.call_soon_threadsafe(
+                        self._fire_discoveries, new_discoveries
+                    )
+                    if not was_known:
+                        self._notify_user(
+                            "new_sensor",
+                            f"LaCrosse: neuer LevelSender {raw_id} erkannt "
+                            f"({level} cm, {temperature} °C)",
+                            f"LaCrosse: new LevelSender {raw_id} discovered "
+                            f"({level} cm, {temperature} °C)",
+                        )
+
+            # Reuse the generic temperature outlier filter (absolute +
+            # delta bounds) - same physical quantity as LaCrosse sensors.
+            temp_key = (resolved_id, "temperature")
+            if self._check_temperature(temp_key, temperature, line):
+                self._update(temp_key, temperature)
+
+            self._update((resolved_id, "level"), round(level, 1))
+            self._update((resolved_id, "voltage"), round(voltage, 1))
+            self._update((resolved_id, "last_seen"), int(time.time() // 60 * 60))
+
+        except (IndexError, ValueError) as exc:
+            _LOGGER.error("LevelSender parse error '%s': %s", line, exc)
 
     def _update(self, key: tuple, value) -> None:
         if self._cache.get(key) != value:

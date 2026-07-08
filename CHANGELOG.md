@@ -2,6 +2,14 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **EMT7110 support** (LaCrosse power/energy plug): decodes `OK EMT7110 …` telegrams, which the LaCrosseITPlusReader sketch already emits over the same serial port. New per-device sensors: voltage, current, power, accumulated energy, and a "consumer connected" binary sensor. Own device (`LaCrosse EMT7110 <id>`) and own ID namespace (`emt_<id>`) so it never collides with a LaCrosse IT+ radio ID and never shows up mislabelled as a weather sensor.
+- **LevelSender support** (DIY tank/cistern fill-level sender): decodes `OK LS …` telegrams. New per-device sensors: fill level, temperature (with the same outlier filter as LaCrosse sensors), and battery voltage. Own device (`LevelSender <id>`, manufacturer "DIY / LevelSender") and own ID namespace (`ls_<id>`) — the sender's 4-bit ID would otherwise be indistinguishable from a LaCrosse radio ID.
+- Both protocols share the existing discovery threshold, radio-silence watchdog, entity-registry preload (works after a restart), and stale-sensor auto-cleanup with the LaCrosse IT+ sensors — no separate configuration needed.
+
 ## [1.3.0] - 2026-07-08
 
 ### Added
