@@ -21,6 +21,8 @@ from .const import (
     CONF_BATTERY_REPLACE_TIMEOUT,
     CONF_DATA_TIMEOUT,
     CONF_DEBUG_TIMEOUT,
+    CONF_DISCOVERY_MIN_PACKETS,
+    CONF_DISCOVERY_WINDOW_SEC,
     CONF_INIT_COMMANDS,
     CONF_NOTIFY_BATTERY_LOW,
     CONF_NOTIFY_BATTERY_REPLACED,
@@ -37,6 +39,8 @@ from .const import (
     DEFAULT_BATTERY_REPLACE_TIMEOUT,
     DEFAULT_DATA_TIMEOUT,
     DEFAULT_DEBUG_TIMEOUT,
+    DEFAULT_DISCOVERY_MIN_PACKETS,
+    DEFAULT_DISCOVERY_WINDOW_SEC,
     DEFAULT_INIT_COMMANDS,
     DEFAULT_NOTIFY_ENTITY,
     DEFAULT_RECONNECT_DELAY,
@@ -185,6 +189,24 @@ class JeeLinkOptionsFlow(config_entries.OptionsFlow):
                     ),
                 ): NumberSelector(
                     NumberSelectorConfig(min=0, max=720, step=1, mode=NumberSelectorMode.BOX)
+                ),
+                # Discovery threshold (like FHEM autoCreateThreshold):
+                # create a new sensor only after N packets within T seconds
+                vol.Required(
+                    CONF_DISCOVERY_MIN_PACKETS,
+                    default=self._current(
+                        CONF_DISCOVERY_MIN_PACKETS, DEFAULT_DISCOVERY_MIN_PACKETS
+                    ),
+                ): NumberSelector(
+                    NumberSelectorConfig(min=1, max=10, step=1, mode=NumberSelectorMode.BOX)
+                ),
+                vol.Required(
+                    CONF_DISCOVERY_WINDOW_SEC,
+                    default=self._current(
+                        CONF_DISCOVERY_WINDOW_SEC, DEFAULT_DISCOVERY_WINDOW_SEC
+                    ),
+                ): NumberSelector(
+                    NumberSelectorConfig(min=10, max=3600, step=10, mode=NumberSelectorMode.BOX)
                 ),
                 # Notifications: master switch + target entity + types
                 vol.Required(

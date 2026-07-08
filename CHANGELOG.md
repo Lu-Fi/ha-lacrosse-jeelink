@@ -2,6 +2,12 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-07-08
+
+### Added
+
+- **Discovery threshold** (like FHEM's `autoCreateThreshold`): a brand-new sensor is only created after N packets within T seconds (options `discovery_min_packets` / `discovery_window_sec`, default **2 packets / 120 s**). Real IT+ sensors transmit every 4–8 seconds and pass the threshold within seconds; one-shot decode flukes and fringe receptions from neighbours never create registry entries (and no "new sensor" notifications) in the first place. Set the packet count to 1 to restore the previous create-immediately behaviour. Battery-replacement aliases are not affected.
+
 ## [1.2.1] - 2026-07-08
 
 ### Fixed

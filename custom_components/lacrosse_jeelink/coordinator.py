@@ -43,6 +43,8 @@ from .const import (
     CONF_BATTERY_REPLACE_TIMEOUT,
     CONF_DATA_TIMEOUT,
     CONF_DEBUG_TIMEOUT,
+    CONF_DISCOVERY_MIN_PACKETS,
+    CONF_DISCOVERY_WINDOW_SEC,
     CONF_INIT_COMMANDS,
     CONF_NOTIFY_BATTERY_LOW,
     CONF_NOTIFY_BATTERY_REPLACED,
@@ -56,6 +58,8 @@ from .const import (
     CONF_SERIAL_TIMEOUT,
     CONF_STALE_CLEANUP_HOURS,
     DEFAULT_DATA_TIMEOUT,
+    DEFAULT_DISCOVERY_MIN_PACKETS,
+    DEFAULT_DISCOVERY_WINDOW_SEC,
     DEFAULT_INIT_COMMANDS,
     DEFAULT_STALE_CLEANUP_HOURS,
     DEFAULT_BATTERY_REPLACE_TIMEOUT,
@@ -143,6 +147,19 @@ class JeeLinkCoordinator:
             _opt(CONF_STALE_CLEANUP_HOURS, DEFAULT_STALE_CLEANUP_HOURS)
         )
         self._last_stale_check = 0.0
+        # Discovery threshold (like FHEM autoCreateThreshold): create a
+        # brand-new sensor only after N packets within T seconds (1 = at
+        # the first packet, previous behaviour).
+        self.discovery_min_packets: int = int(
+            _opt(CONF_DISCOVERY_MIN_PACKETS, DEFAULT_DISCOVERY_MIN_PACKETS)
+        )
+        self.discovery_window_sec: int = int(
+            _opt(CONF_DISCOVERY_WINDOW_SEC, DEFAULT_DISCOVERY_WINDOW_SEC)
+        )
+        # Candidate counter for the threshold: sensor_id -> (first_ts, count).
+        # Bounded by the 8-bit radio ID space; entries reset themselves when
+        # the window expires.
+        self._discovery_candidates: dict[int, tuple[float, int]] = {}
 
         self.debug: bool = False
         # Firmware identification of the stick (banner line of the
@@ -855,6 +872,35 @@ class JeeLinkCoordinator:
                     "(no battery replacement mode armed)",
                     sensor_id,
                 )
+
+            # ── Discovery threshold (like FHEM autoCreateThreshold) ────────
+            # A brand-new sensor is only created after N packets within T
+            # seconds. Supported IT+ sensors transmit every 4-8 s, so any
+            # real sensor passes within seconds - one-shot decode flukes and
+            # fringe receptions never make it into the registry. Aliased IDs
+            # (battery replacement) resolve to a known sensor and are not
+            # affected.
+            if (
+                self.auto_add
+                and self.discovery_min_packets > 1
+                and resolved_id not in self._discovered
+            ):
+                now = time.time()
+                first_ts, count = self._discovery_candidates.get(
+                    resolved_id, (now, 0)
+                )
+                if now - first_ts > self.discovery_window_sec:
+                    first_ts, count = now, 0  # window expired -> start over
+                count += 1
+                if count < self.discovery_min_packets:
+                    self._discovery_candidates[resolved_id] = (first_ts, count)
+                    self._debug_log(
+                        f"sensor {resolved_id}: discovery threshold "
+                        f"{count}/{self.discovery_min_packets} within "
+                        f"{self.discovery_window_sec}s - not created yet"
+                    )
+                    return
+                self._discovery_candidates.pop(resolved_id, None)
 
             # Which channels are new for this sensor?
             temp_channel = "temperature2" if is_probe2 else "temperature"

@@ -15,6 +15,7 @@ Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and hu
 - **Automatic sensor discovery**: new sensors appear as devices with temperature, humidity (if present), calculated **dew point** (Magnus formula, identical to FHEM) and a battery-low binary sensor
 - Second temperature channel (`temperature2`) for sensors with an external probe
 - **Outlier filtering**: absolute limits (−50…60 °C, 1…100 %) plus delta filters (10 K / 20 % jumps); a genuine jump is accepted after N consecutive identical readings (configurable)
+- **Discovery threshold** (like FHEM's `autoCreateThreshold`): new sensors are only created after N packets within T seconds (default 2/120 s) — one-shot decode flukes and fringe receptions never clutter the registry
 - **Battery replacement mode** (like FHEM's `replaceBatteryForSec`): press the per-sensor button, swap the battery within the configured window, and the sensor's new random radio ID is mapped onto the existing device — entities and history are preserved
 - Values are **restored after a restart** (RestoreSensor) until fresh packets arrive
 - Robust serial handling: DTR hardware reset, automatic recovery from known firmware hangs (`drecvintr exit`, `RFM12 hang`), automatic reconnect with configurable delay
@@ -97,6 +98,7 @@ Copy `custom_components/lacrosse_jeelink/` into your `config/custom_components/`
 | Serial port / Auto-discover / Outlier confirmation | — | Same as setup, changeable later. |
 | Serial read timeout (s) | `1` | Blocking read timeout on the port — only change for troubleshooting. |
 | Reconnect delay (s) | `5` | Wait time before reconnecting after a serial error (1–600 s). |
+| Create new sensors after N packets / window (s) | `2` / `120` | A brand-new sensor is only created after N packets within the window (FHEM's `autoCreateThreshold`). Real IT+ sensors send every 4–8 s and pass within seconds; single decode flukes never create devices. `1` = create at the first packet (old behaviour). |
 | Auto-remove silent sensors after (h) | `0` (off) | Automatically removes auto-discovered sensors that haven't sent data for this long — e.g. a neighbour's sensor that briefly reached your receiver. Only sensors you have never touched are removed: renaming the device or any of its entities, assigning an area or adding labels/aliases all mark the sensor as *yours* and protect it permanently — a known sensor with an empty battery keeps its entities and its battery-replaced button. Checked every 15 minutes. |
 | Battery replacement window (s) | `120` | How long the battery-replacement mode stays armed after pressing the button. |
 | Debug mode auto-off (s) | `300` | Verbose logging switches itself off after this time. |

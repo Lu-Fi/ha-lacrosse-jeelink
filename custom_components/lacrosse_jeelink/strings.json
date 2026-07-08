@@ -42,6 +42,8 @@
           "notify_battery_low": "Notify: battery low",
           "notify_battery_replaced": "Notify: battery replacement detected",
           "stale_cleanup_hours": "Auto-remove silent sensors after (hours, 0 = off)",
+          "discovery_min_packets": "Create new sensors after N packets (1 = immediately)",
+          "discovery_window_sec": "Discovery window (seconds)",
           "init_commands": "Firmware init commands"
         },
         "data_description": {
@@ -54,6 +56,8 @@
           "notify_entity": "Target notify.* entity (Telegram, mobile app, …). Empty = no messages.",
           "data_timeout": "Warn when no radio packet has been parsed for this long even though the serial connection is up (silent firmware hang, antenna problem). A recovery message is sent when data resumes. 0 disables the watchdog.",
           "stale_cleanup_hours": "Automatically remove auto-discovered sensors that haven't sent data for this long — e.g. a neighbour's sensor that briefly reached your receiver. Only untouched sensors are removed: renaming the device or any entity, assigning an area, or adding labels protects a sensor permanently (it keeps its entities and battery-replaced button even with an empty battery).",
+          "discovery_min_packets": "A brand-new sensor is only created after this many packets within the discovery window (like FHEM's autoCreateThreshold). Real IT+ sensors transmit every 4–8 seconds and pass within seconds; one-shot decode flukes and fringe receptions are never created. 1 = create at the first packet.",
+          "discovery_window_sec": "Time window for the discovery threshold. Default 120 s.",
           "init_commands": "Space-separated commands sent to the sketch on every connect (like FHEM's initCommands). Default '7m 10t' = cycle all three data rates every 10 s. Example for a fixed rate: '0m' plus '17241r'."
         }
       }

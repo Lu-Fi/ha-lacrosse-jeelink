@@ -30,6 +30,12 @@ CONF_STALE_CLEANUP_HOURS = "stale_cleanup_hours"
 # Firmware init commands sent on connect (space-separated, FHEM-style
 # initCommands). Default cycles all three data rates every 10 seconds.
 CONF_INIT_COMMANDS = "init_commands"
+# Discovery threshold (like FHEM's autoCreateThreshold): create a brand-new
+# sensor only after N packets within T seconds. Supported IT+ sensors
+# transmit every 4-8 s, so a real sensor passes within seconds - one-shot
+# decode flukes and fringe receptions never create registry entries.
+CONF_DISCOVERY_MIN_PACKETS = "discovery_min_packets"  # 1 = create immediately
+CONF_DISCOVERY_WINDOW_SEC = "discovery_window_sec"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 # No default serial port on purpose: paths like
@@ -43,6 +49,8 @@ DEFAULT_NOTIFY_ENTITY = ""          # empty = no notifications
 DEFAULT_DATA_TIMEOUT = 15           # minutes without any parsed packet -> warn (0 = off)
 DEFAULT_STALE_CLEANUP_HOURS = 0     # hours before auto-removing silent unnamed sensors (0 = off)
 DEFAULT_INIT_COMMANDS = "7m 10t"    # data-rate toggle mask 7, toggle every 10 s
+DEFAULT_DISCOVERY_MIN_PACKETS = 2   # packets within the window before a new sensor is created (1 = immediately)
+DEFAULT_DISCOVERY_WINDOW_SEC = 120  # seconds (FHEM-style autoCreateThreshold "2:120")
 
 OUTLIER_CONFIRM_COUNT = 5  # default for CONF_OUTLIER_CONFIRM_COUNT
 

@@ -42,6 +42,8 @@
           "notify_battery_low": "Meldung: Batterie schwach",
           "notify_battery_replaced": "Meldung: Batteriewechsel erkannt",
           "stale_cleanup_hours": "Stumme Sensoren automatisch entfernen nach (Stunden, 0 = aus)",
+          "discovery_min_packets": "Neue Sensoren erst anlegen nach N Paketen (1 = sofort)",
+          "discovery_window_sec": "Zeitfenster für die Anlege-Schwelle (Sekunden)",
           "init_commands": "Firmware-Init-Kommandos"
         },
         "data_description": {
@@ -54,6 +56,8 @@
           "notify_entity": "Ziel-notify.*-Entity (Telegram, App-Push, …). Leer = keine Meldungen.",
           "data_timeout": "Warnt, wenn trotz bestehender serieller Verbindung so lange kein Funkpaket mehr geparst wurde (stiller Firmware-Hänger, Antennenproblem). Bei wieder eintreffenden Daten kommt eine Entwarnung. 0 schaltet den Watchdog ab.",
           "stale_cleanup_hours": "Entfernt automatisch erkannte Sensoren, die so lange keine Daten mehr gesendet haben — z. B. den Nachbar-Sensor, der kurz in den Empfang gefunkt hat. Entfernt werden nur unangetastete Sensoren: Umbenennen des Geräts oder einer Entity, Raum-Zuordnung oder Labels schützen einen Sensor dauerhaft (er behält seine Entities und den Batteriewechsel-Button auch mit leerer Batterie).",
+          "discovery_min_packets": "Ein neuer Sensor wird erst angelegt, wenn so viele Pakete innerhalb des Zeitfensters empfangen wurden (wie FHEMs autoCreateThreshold). Echte IT+-Sensoren senden alle 4–8 Sekunden und bestehen die Schwelle in Sekunden; Einmal-Fehldekodierungen und Randempfänge werden gar nicht erst angelegt. 1 = beim ersten Paket anlegen.",
+          "discovery_window_sec": "Zeitfenster für die Anlege-Schwelle. Standard 120 s.",
           "init_commands": "Kommandos (durch Leerzeichen getrennt), die bei jedem Verbinden an den Sketch gehen (wie FHEMs initCommands). Standard '7m 10t' = alle drei Datenraten im 10-s-Wechsel. Beispiel für feste Rate: '0m' plus '17241r'."
         }
       }
