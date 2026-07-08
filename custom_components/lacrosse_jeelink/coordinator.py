@@ -442,12 +442,23 @@ class JeeLinkCoordinator:
 
         for sensor_id in list(self._discovered):
             last = self._last_seen_epoch(sensor_id)
-            if last is None or last >= cutoff:
+            if last is None:
+                _LOGGER.debug(
+                    "Stale cleanup: sensor %d kept (no last-seen timestamp)",
+                    sensor_id,
+                )
+                continue
+            if last >= cutoff:
                 continue
             device = dev_reg.async_get_device(
                 identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")}
             )
             if device and (device.name_by_user or device.area_id or device.labels):
+                _LOGGER.debug(
+                    "Stale cleanup: sensor %d kept (device customised: "
+                    "name_by_user=%s, area=%s, labels=%s)",
+                    sensor_id, device.name_by_user, device.area_id, device.labels,
+                )
                 continue  # touched by the user -> never remove automatically
 
             uid_prefix = f"{self._entry_id}_{sensor_id}_"
@@ -455,11 +466,32 @@ class JeeLinkCoordinator:
                 reg_entry for reg_entry in all_entries
                 if reg_entry.unique_id.startswith(uid_prefix)
             ]
-            if any(
-                reg_entry.name or reg_entry.area_id or reg_entry.labels
-                or reg_entry.aliases
-                for reg_entry in sensor_entities
-            ):
+            customised = []
+            for reg_entry in sensor_entities:
+                reason = None
+                if reg_entry.name:
+                    reason = f"name={reg_entry.name!r}"
+                elif reg_entry.area_id:
+                    reason = f"area={reg_entry.area_id!r}"
+                elif reg_entry.labels:
+                    reason = f"labels={reg_entry.labels!r}"
+                # Only count real, non-empty string aliases. Recent HA
+                # versions pre-fill every entity's alias list with an
+                # internal sentinel (ComputedNameType._singleton), which
+                # is truthy and would otherwise mark ALL entities as
+                # customised and silently disable the cleanup.
+                elif any(
+                    isinstance(a, str) and a.strip()
+                    for a in (reg_entry.aliases or ())
+                ):
+                    reason = f"aliases={reg_entry.aliases!r}"
+                if reason:
+                    customised.append(f"{reg_entry.entity_id} ({reason})")
+            if customised:
+                _LOGGER.debug(
+                    "Stale cleanup: sensor %d kept (customised entities: %s)",
+                    sensor_id, customised,
+                )
                 continue  # at least one entity customised -> keep
 
             for reg_entry in sensor_entities:

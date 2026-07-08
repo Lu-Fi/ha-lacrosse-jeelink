@@ -2,6 +2,13 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.1] - 2026-07-08
+
+### Fixed
+
+- **Automatic cleanup of stray sensors never removed anything** on recent Home Assistant versions. Since HA's aliases-v2 migration, every entity's alias list contains an internal sentinel (`ComputedNameType._singleton`), which made the "user has customised this entity" protection check truthy for *all* entities — every stale sensor was treated as adopted and kept forever. The check now only counts real, non-empty string aliases.
+- The cleanup now logs its skip reasons (not stale, no timestamp, device/entity customised — including which entity and which attribute) at debug level, so a silent non-removal is diagnosable.
+
 ## [1.2.0] - 2026-07-05
 
 ### Added
