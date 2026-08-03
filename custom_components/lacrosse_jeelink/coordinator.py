@@ -231,6 +231,23 @@ class JeeLinkCoordinator:
         lang = (self.hass.config.language or "de").lower()
         return "en" if lang.startswith("en") else "de"
 
+    def _device_label(self, sensor_id: int) -> str:
+        """Human-readable label for an already-known LaCrosse IT+ sensor:
+        'LaCrosse Sensor 3 (Heizung Bad)' if the user renamed the device in
+        HA, else just 'LaCrosse Sensor 3'. Used in notifications that refer
+        to an existing device by its raw radio ID (battery_low,
+        battery_replaced) - without this, the user has no way to tell which
+        physical sensor the message is about besides looking up the ID in
+        the device registry by hand."""
+        dev_reg = dr.async_get(self.hass)
+        device = dev_reg.async_get_device(
+            identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")}
+        )
+        base = f"LaCrosse Sensor {sensor_id}"
+        if device and device.name_by_user:
+            return f"{base} ({device.name_by_user})"
+        return base
+
     def _notify_user(self, category: str, message_de: str, message_en: str) -> None:
         """Send a message to the configured notify entity.
 
@@ -238,6 +255,19 @@ class JeeLinkCoordinator:
         happens without a configured entity, with notify_enabled=False, or
         with the message type (category) switched off. Delivery errors must
         never disturb operation.
+
+        Uses telegram_bot.send_message with parse_mode=plain_text instead of
+        the generic notify.send_message action: the latter sends with
+        Markdown parsing by default, and message text here routinely
+        contains hyphens/parentheses (e.g. "Funk-ID", "(Verbindung ...)")
+        that make Telegram reject the message with "BadRequest: can't parse
+        entities" - silently, since the previous blocking=False meant any
+        delivery failure happened in a detached background task this
+        method's own try/except never saw. blocking=True now makes a real
+        failure show up in the log instead of vanishing (same fix already
+        applied to the pvsc integration after the identical bug there).
+        Trade-off: no longer generic for arbitrary notify platforms, but
+        matches how notify_entity is actually used here (Telegram).
         """
         if not self.notify_enabled or not self.notify_entity:
             return
@@ -248,10 +278,14 @@ class JeeLinkCoordinator:
         async def _send() -> None:
             try:
                 await self.hass.services.async_call(
-                    "notify",
+                    "telegram_bot",
                     "send_message",
-                    {"entity_id": self.notify_entity, "message": message},
-                    blocking=False,
+                    {
+                        "entity_id": self.notify_entity,
+                        "message": message,
+                        "parse_mode": "plain_text",
+                    },
+                    blocking=True,
                 )
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(
@@ -958,11 +992,12 @@ class JeeLinkCoordinator:
                         self._id_aliases[sensor_id] = old_id
                         del self._replace_battery[old_id]
                         self._schedule_alias_save()
+                        label = self._device_label(old_id)
                         self._notify_user(
                             "battery_replaced",
-                            f"LaCrosse Sensor {old_id}: Batteriewechsel erkannt "
+                            f"{label}: Batteriewechsel erkannt "
                             f"(neue Funk-ID {sensor_id})",
-                            f"LaCrosse sensor {old_id}: battery replacement detected "
+                            f"{label}: battery replacement detected "
                             f"(new radio ID {sensor_id})",
                         )
                         self.hass.loop.call_soon_threadsafe(self._notify_listeners)
@@ -1080,10 +1115,11 @@ class JeeLinkCoordinator:
                 # Only notify for already known sensors (no spam right at
                 # the first discovery of a sensor with an empty battery).
                 if was_known:
+                    label = self._device_label(resolved_id)
                     self._notify_user(
                         "battery_low",
-                        f"LaCrosse Sensor {resolved_id}: Batterie schwach",
-                        f"LaCrosse sensor {resolved_id}: battery low",
+                        f"{label}: Batterie schwach",
+                        f"{label}: battery low",
                     )
             elif not battery_low:
                 self._battery_notified.discard(resolved_id)

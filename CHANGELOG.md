@@ -2,6 +2,13 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.2] - 2026-08-03
+
+### Fixed
+
+- **Battery-low and battery-replaced notifications only named the sensor by its raw radio ID** (e.g. "LaCrosse Sensor 3: Batterie schwach"), forcing a manual lookup in the device registry to figure out which physical sensor that was. Both messages now include the device's user-assigned name when set (e.g. "LaCrosse Sensor 3 (Heizung Bad): Batterie schwach"). Newly-discovered-sensor messages are unaffected — there's no name to show yet at first discovery.
+- **Notifications could fail silently.** `_notify_user()` called the generic `notify.send_message` action with `blocking=False`: Telegram sends with Markdown parsing by default, and message text here routinely contains hyphens/parentheses (e.g. "Funk-ID", "(Verbindung ...)") that Telegram's parser rejects with `BadRequest: can't parse entities` — a failure that `blocking=False` hid in a detached background task, invisible to this method's own error handling. Now calls `telegram_bot.send_message` with `parse_mode: plain_text` and `blocking=True`, so a real delivery failure is at least logged instead of vanishing.
+
 ## [1.4.1] - 2026-07-08
 
 ### Fixed
