@@ -17,6 +17,7 @@ OK 9 format byte layout (parts[2..6]):
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import math
@@ -238,14 +239,30 @@ class JeeLinkCoordinator:
         to an existing device by its raw radio ID (battery_low,
         battery_replaced) - without this, the user has no way to tell which
         physical sensor the message is about besides looking up the ID in
-        the device registry by hand."""
-        dev_reg = dr.async_get(self.hass)
-        device = dev_reg.async_get_device(
-            identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")}
-        )
+        the device registry by hand.
+
+        May be called from the serial reader thread. The device registry
+        read is marshalled onto the event loop (like every other hass
+        interaction in this file) instead of touched directly, to respect
+        its loop affinity."""
+
+        async def _lookup() -> str | None:
+            dev_reg = dr.async_get(self.hass)
+            device = dev_reg.async_get_device(
+                identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")}
+            )
+            return device.name_by_user if device else None
+
+        try:
+            name_by_user = asyncio.run_coroutine_threadsafe(
+                _lookup(), self.hass.loop
+            ).result(timeout=2)
+        except Exception:  # noqa: BLE001
+            name_by_user = None
+
         base = f"LaCrosse Sensor {sensor_id}"
-        if device and device.name_by_user:
-            return f"{base} ({device.name_by_user})"
+        if name_by_user:
+            return f"{base} ({name_by_user})"
         return base
 
     def _notify_user(self, category: str, message_de: str, message_en: str) -> None:

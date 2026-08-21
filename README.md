@@ -20,7 +20,7 @@ Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and hu
 - **Battery replacement mode** (like FHEM's `replaceBatteryForSec`): press the per-sensor button, swap the battery within the configured window, and the sensor's new random radio ID is mapped onto the existing device — entities and history are preserved
 - Values are **restored after a restart** (RestoreSensor) until fresh packets arrive
 - Robust serial handling: DTR hardware reset, automatic recovery from known firmware hangs (`drecvintr exit`, `RFM12 hang`), automatic reconnect with configurable delay
-- **Optional notifications** via any `notify` entity (Telegram, mobile app, …): connection lost/restored, new sensor discovered, battery low, battery replacement detected
+- **Optional notifications** via a Telegram `notify` entity: connection lost/restored, new sensor discovered, battery low, battery replacement detected
 - Debug switch with automatic timeout for troubleshooting reception issues
 - Config UI in German and English; ships its own brand icon
 
@@ -94,7 +94,7 @@ Copy `custom_components/lacrosse_jeelink/` into your `config/custom_components/`
 | Debug mode auto-off (s) | `300` | Verbose logging switches itself off after this time. |
 | Radio-silence warning after (min) | `15` | Warn when no radio packet has been parsed for this long even though the serial connection is up (silent firmware hang, antenna problem). A recovery message follows when data resumes. `0` disables the watchdog. |
 | Send notifications | on | Master switch for all notifications. |
-| Notify entity | empty | Target `notify.*` entity (Telegram, mobile app, …). Empty = no messages, regardless of the switches. |
+| Notify entity | empty | Target `notify.*` entity of the Telegram integration. Empty = no messages, regardless of the switches. |
 | Notify: connection / radio silence / new sensor / battery low / battery replaced | all on | Each notification type can be enabled/disabled individually (in addition to the master switch). |
 | Firmware init commands | `7m 10t` | Space-separated commands sent to the sketch on every connect — like FHEM's `initCommands` attribute. The default cycles all three data rates every 10 s; users with a homogeneous sensor generation can pin a fixed rate (e.g. `0m 17241r`) to save sensor battery. |
 

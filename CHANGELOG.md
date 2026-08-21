@@ -2,6 +2,18 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.3] - 2026-08-21
+
+### Fixed
+
+- **EMT7110/LevelSender entities had no name in the UI.** The `voltage`, `current`, `power`, `energy`, `level` sensor translation keys and the `consumer_connected` binary sensor key (added in 1.4.0) existed only in `strings.json`, not in `translations/en.json`/`translations/de.json`. With `_attr_has_entity_name = True` that produced a blank entity name for all six. Both translation files now carry the same keys as `strings.json`.
+- **The notify-entity picker offered any `notify.*` entity, but only Telegram ever worked.** `_notify_user()` calls `telegram_bot.send_message`, and core rejects that service's `entity_id` for anything outside the `telegram_bot` integration — picking e.g. a mobile-app notify entity silently failed (swallowed by this method's own warning-only error handling). The selector is now scoped to `integration: telegram_bot`, and the option text/README no longer imply broader `notify.*` support.
+- Raised the `hacs.json` Home Assistant floor from `2024.6.0` to `2026.3.0` — the shipped `custom_components/lacrosse_jeelink/brand/` icons only load on 2026.3+ (as already noted in the 1.1.0 release), so the declared floor was never actually installable as low as it claimed.
+
+### Changed
+
+- `_device_label()` (used to name a sensor in battery-low/battery-replaced notifications) is called from the serial reader thread but read the device registry directly, unlike every other cross-thread interaction in this file. It now marshals the lookup through `asyncio.run_coroutine_threadsafe`, matching the rest of the file's loop-affinity handling. Low practical impact (it was a read), but worth doing right.
+
 ## [1.4.2] - 2026-08-03
 
 ### Fixed

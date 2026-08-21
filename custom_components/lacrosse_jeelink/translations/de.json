@@ -34,7 +34,7 @@
           "battery_replace_timeout": "Zeitfenster für Batteriewechsel (Sekunden)",
           "debug_timeout": "Debug-Modus automatisch aus nach (Sekunden)",
           "notify_enabled": "Benachrichtigungen senden",
-          "notify_entity": "Notify-Entity für Meldungen",
+          "notify_entity": "Telegram-Entity für Meldungen",
           "data_timeout": "Funkstille-Warnung nach (Minuten, 0 = aus)",
           "notify_connection": "Meldung: Verbindung verloren/wiederhergestellt",
           "notify_data_timeout": "Meldung: Funkstille / Daten wieder da",
@@ -53,7 +53,7 @@
           "battery_replace_timeout": "So lange bleibt der Batteriewechsel-Modus nach Knopfdruck aktiv. Standard 120 s.",
           "debug_timeout": "Das Debug-Logging schaltet sich nach dieser Zeit selbst ab. Standard 300 s.",
           "notify_enabled": "Hauptschalter für alle Meldungen (Verbindung verloren/wiederhergestellt, neuer Sensor, Batterie schwach, Batteriewechsel erkannt).",
-          "notify_entity": "Ziel-notify.*-Entity (Telegram, App-Push, …). Leer = keine Meldungen.",
+          "notify_entity": "Ziel-notify.*-Entity der Telegram-Integration. Leer = keine Meldungen.",
           "data_timeout": "Warnt, wenn trotz bestehender serieller Verbindung so lange kein Funkpaket mehr geparst wurde (stiller Firmware-Hänger, Antennenproblem). Bei wieder eintreffenden Daten kommt eine Entwarnung. 0 schaltet den Watchdog ab.",
           "stale_cleanup_hours": "Entfernt automatisch erkannte Sensoren, die so lange keine Daten mehr gesendet haben — z. B. den Nachbar-Sensor, der kurz in den Empfang gefunkt hat. Entfernt werden nur unangetastete Sensoren: Umbenennen des Geräts oder einer Entity, Raum-Zuordnung oder Labels schützen einen Sensor dauerhaft (er behält seine Entities und den Batteriewechsel-Button auch mit leerer Batterie).",
           "discovery_min_packets": "Ein neuer Sensor wird erst angelegt, wenn so viele Pakete innerhalb des Zeitfensters empfangen wurden (wie FHEMs autoCreateThreshold). Echte IT+-Sensoren senden alle 4–8 Sekunden und bestehen die Schwelle in Sekunden; Einmal-Fehldekodierungen und Randempfänge werden gar nicht erst angelegt. 1 = beim ersten Paket anlegen.",
@@ -79,6 +79,21 @@
       },
       "last_seen": {
         "name": "Zuletzt empfangen"
+      },
+      "voltage": {
+        "name": "Spannung"
+      },
+      "current": {
+        "name": "Strom"
+      },
+      "power": {
+        "name": "Leistung"
+      },
+      "energy": {
+        "name": "Energie"
+      },
+      "level": {
+        "name": "Füllstand"
       }
     },
     "binary_sensor": {
@@ -87,6 +102,9 @@
       },
       "connected": {
         "name": "Verbunden"
+      },
+      "consumer_connected": {
+        "name": "Verbraucher angeschlossen"
       },
       "radio_silence": {
         "name": "Funkstille"

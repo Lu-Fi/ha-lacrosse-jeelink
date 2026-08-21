@@ -217,7 +217,9 @@ class JeeLinkOptionsFlow(config_entries.OptionsFlow):
                     CONF_NOTIFY_ENTITY,
                     default=self._current(CONF_NOTIFY_ENTITY, DEFAULT_NOTIFY_ENTITY),
                 ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="notify")
+                    selector.EntitySelectorConfig(
+                        domain="notify", integration="telegram_bot"
+                    )
                 ),
                 vol.Required(
                     CONF_NOTIFY_CONNECTION,
