@@ -309,7 +309,7 @@ class JeeLinkCoordinator:
                     "Notification via %s failed: %s", self.notify_entity, err
                 )
 
-        self.hass.loop.call_soon_threadsafe(
+        self._call_soon_threadsafe(
             lambda: self.hass.async_create_task(_send())
         )
 
@@ -361,7 +361,7 @@ class JeeLinkCoordinator:
         def _save() -> None:
             self._alias_store.async_delay_save(lambda: data, 1.0)
 
-        self.hass.loop.call_soon_threadsafe(_save)
+        self._call_soon_threadsafe(_save)
 
     @staticmethod
     def _sensor_kind(sensor_id: int | str) -> str:
@@ -665,6 +665,21 @@ class JeeLinkCoordinator:
 
     # ── Listener pattern ───────────────────────────────────────────────────────
 
+    def _call_soon_threadsafe(self, callback, *args) -> None:
+        """Wrapper around hass.loop.call_soon_threadsafe() used by every
+        thread-to-loop handoff in this file. During an HA shutdown/reload
+        the serial reader thread can outrace the event loop closing - the
+        raw call would then raise "Event loop is closed" from inside the
+        reader thread's except-handler, which itself calls this again,
+        producing a scary but harmless ERROR log entry every time. Nothing
+        is lost by skipping the call in that case: the coordinator is being
+        torn down anyway."""
+        loop = self.hass.loop
+        try:
+            loop.call_soon_threadsafe(callback, *args)
+        except RuntimeError:
+            pass
+
     def async_add_listener(self, listener) -> callable:
         self._state_listeners.append(listener)
         def remove():
@@ -805,7 +820,7 @@ class JeeLinkCoordinator:
                     f"JeeLink: Verbindung verloren ({reason})",
                     f"JeeLink: connection lost ({reason})",
                 )
-        self.hass.loop.call_soon_threadsafe(self._notify_listeners)
+        self._call_soon_threadsafe(self._notify_listeners)
 
     def _serial_loop(self) -> None:
         ser = None
@@ -867,7 +882,7 @@ class JeeLinkCoordinator:
                         if fw and fw != self.firmware:
                             self.firmware = fw
                             _LOGGER.info("JeeLink firmware detected: %s", fw)
-                            self.hass.loop.call_soon_threadsafe(
+                            self._call_soon_threadsafe(
                                 self._async_apply_firmware
                             )
                         continue
@@ -914,7 +929,7 @@ class JeeLinkCoordinator:
         self.last_data_ts = time.time()
         if self._data_timeout_notified:
             self._data_timeout_notified = False
-            self.hass.loop.call_soon_threadsafe(self._notify_listeners)
+            self._call_soon_threadsafe(self._notify_listeners)
             self._notify_user(
                 "data_timeout",
                 "JeeLink: Funkdaten werden wieder empfangen",
@@ -1017,7 +1032,7 @@ class JeeLinkCoordinator:
                             f"{label}: battery replacement detected "
                             f"(new radio ID {sensor_id})",
                         )
-                        self.hass.loop.call_soon_threadsafe(self._notify_listeners)
+                        self._call_soon_threadsafe(self._notify_listeners)
                         break
 
             # Resolve the ID via the alias table (returns old_id after a swap)
@@ -1075,7 +1090,7 @@ class JeeLinkCoordinator:
                     new_discoveries.append(SensorDiscovery(resolved_id, "replace_battery"))
 
                 if new_discoveries:
-                    self.hass.loop.call_soon_threadsafe(
+                    self._call_soon_threadsafe(
                         self._fire_discoveries, new_discoveries
                     )
                     if not was_known:
@@ -1207,7 +1222,7 @@ class JeeLinkCoordinator:
                         new_discoveries.append(SensorDiscovery(resolved_id, channel))
 
                 if new_discoveries:
-                    self.hass.loop.call_soon_threadsafe(
+                    self._call_soon_threadsafe(
                         self._fire_discoveries, new_discoveries
                     )
                     if not was_known:
@@ -1280,7 +1295,7 @@ class JeeLinkCoordinator:
                         new_discoveries.append(SensorDiscovery(resolved_id, channel))
 
                 if new_discoveries:
-                    self.hass.loop.call_soon_threadsafe(
+                    self._call_soon_threadsafe(
                         self._fire_discoveries, new_discoveries
                     )
                     if not was_known:
@@ -1309,7 +1324,7 @@ class JeeLinkCoordinator:
         if self._cache.get(key) != value:
             self._cache[key] = value
             self.sensor_states[key] = value
-            self.hass.loop.call_soon_threadsafe(self._notify_listeners)
+            self._call_soon_threadsafe(self._notify_listeners)
 
     def _check_temperature(self, key: tuple, temperature: float, raw: str) -> bool:
         if not (DEFAULT_TEMP_MIN <= temperature <= DEFAULT_TEMP_MAX):

@@ -2,6 +2,12 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.4] - 2026-08-30
+
+### Fixed
+
+- **A cosmetic `Serial error: Event loop is closed` was logged at ERROR level during some HA shutdowns/reloads.** The serial reader thread could outrace the closing event loop while scheduling a callback (e.g. via `_set_connected`), and its own exception handler then tried to schedule another callback on the already-closed loop, propagating the error. All thread-to-loop handoffs now go through a small `_call_soon_threadsafe()` wrapper that silently drops the call if the loop is already closed — harmless, since the coordinator is being torn down anyway.
+
 ## [1.4.3] - 2026-08-21
 
 ### Fixed
