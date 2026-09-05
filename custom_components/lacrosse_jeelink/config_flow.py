@@ -1,6 +1,8 @@
 """Config flow for LaCrosse JeeLink Bridge."""
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -49,6 +51,8 @@ from .const import (
     OUTLIER_CONFIRM_COUNT,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 def _list_serial_ports() -> list[str]:
     """Return available serial ports sorted by device path."""
@@ -59,6 +63,25 @@ def _list_serial_ports() -> list[str]:
         return [p.device for p in ports]
     except Exception:
         return []
+
+
+def _test_port(port: str) -> str | None:
+    """Open (and immediately close) the serial port. Returns an error string
+    on failure, None on success.
+
+    Runs in an executor. Without this check a typo'd port creates an entry
+    that only ever logs "Serial error: ..." every reconnect_delay seconds,
+    with nothing in the UI pointing at the cause. Uses plain serial.Serial()
+    with the same parameters as the coordinator, so the test really is what
+    the integration does later.
+    """
+    try:
+        import serial
+
+        serial.Serial(port, 57600, timeout=1).close()
+    except Exception as exc:  # noqa: BLE001 - any open failure is a failure
+        return str(exc)
+    return None
 
 
 def _port_selector(current: str | None) -> SelectSelector:
@@ -87,12 +110,22 @@ class JeeLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             await self.async_set_unique_id(user_input[CONF_SERIAL_PORT])
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(
-                title="LaCrosse JeeLink Bridge",
-                data=user_input,
+            error = await self.hass.async_add_executor_job(
+                _test_port, user_input[CONF_SERIAL_PORT]
             )
+            if error is None:
+                return self.async_create_entry(
+                    title="LaCrosse JeeLink Bridge",
+                    data=user_input,
+                )
+            _LOGGER.error(
+                "Cannot open serial port %s: %s", user_input[CONF_SERIAL_PORT], error
+            )
+            errors[CONF_SERIAL_PORT] = "cannot_connect"
 
-        port_sel = await self.hass.async_add_executor_job(_port_selector, None)
+        port_sel = await self.hass.async_add_executor_job(
+            _port_selector, (user_input or {}).get(CONF_SERIAL_PORT)
+        )
         schema = vol.Schema(
             {
                 vol.Required(CONF_SERIAL_PORT): port_sel,

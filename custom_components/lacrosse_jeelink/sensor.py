@@ -97,10 +97,19 @@ class _LaCrosseBase(RestoreSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        # Restore the last value from the DB if no live value exists yet
+        # Restore the last value from the DB if no live value exists yet.
+        # The membership check is repeated AFTER the await: the serial reader
+        # thread keeps delivering packets during platform setup, and a live
+        # reading arriving in that window must not be overwritten by the
+        # restored one - which would also poison _cache and get the next few
+        # real packets rejected as outliers.
         if self._state_key not in self._coordinator.sensor_states:
             last_data = await self.async_get_last_sensor_data()
-            if last_data is not None and last_data.native_value is not None:
+            if (
+                last_data is not None
+                and last_data.native_value is not None
+                and self._state_key not in self._coordinator.sensor_states
+            ):
                 self._coordinator.sensor_states[self._state_key] = last_data.native_value
                 self._coordinator._cache[self._state_key] = last_data.native_value
         self._remove_listener = self._coordinator.async_add_listener(self._on_update)

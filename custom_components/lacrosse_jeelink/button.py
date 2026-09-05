@@ -54,7 +54,9 @@ class JeeLinkResetButton(ButtonEntity):
         return self._coordinator.device_info
 
     async def async_press(self) -> None:
-        await self.hass.async_add_executor_job(self._coordinator.request_reset)
+        # Non-blocking (sets a threading.Event the reader thread polls), so
+        # no executor job needed.
+        self._coordinator.request_reset()
 
 
 class LaCrosseBatteryReplaceButton(ButtonEntity):

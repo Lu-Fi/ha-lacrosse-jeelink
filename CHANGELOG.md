@@ -2,6 +2,29 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-09-05
+
+### Fixed
+
+- **The "Battery replaced" button stayed armed (`replace_active: true`) after its window had expired, and logged an error while doing so.** The timer that refreshes the entities at the end of the replacement window was scheduled with a bare `lambda`, which Home Assistant classifies as `HassJobType.Executor` and therefore runs on a worker thread — where the entity refresh (`async_write_ha_state()`) is not allowed. Every button press produced an error in the log 121 s later, and the attribute only corrected itself with the next received packet. The timer target is now a proper `@callback`, is no longer stacked when the button is pressed again, and is cancelled on unload.
+- **Deleting a sensor device by hand removed it for good.** `async_remove_config_entry_device()` dropped the device and its entities from the registries but left the sensor in the coordinator's internal `_discovered` table with all its channels — so the next radio packet found nothing "new" to discover and the entities were never recreated, contrary to the documented "reappears if it sends another packet" behaviour. The internal state is now cleaned up as well (the same cleanup the automatic stale-sensor removal already did).
+- **The bridge device could be deleted too**, taking the connected / radio-silence / stick-reset / debug entities of the config entry with it and leaving every sensor's `via_device` dangling until a reload. Only per-sensor devices are removable now.
+- **The outlier confirmation never checked the value it was confirming.** `outlier_confirm_count` counted *any* consecutive out-of-range reading, so N wildly different garbage values confirmed each other just as readily as a real new level — while the log message and the option text promised "the same value". Confirmation now requires the readings to be consistent with each other (within the same delta limit), which rejects random decode garbage but still accepts a genuine jump (sensor moved, long dropout). Deliberately not a strict equality check: real readings fluctuate by 0.1 °C, which would leave a sensor stuck on its old value forever. Option texts and log message updated accordingly.
+- **A restored value could overwrite a live reading right after a restart.** `async_added_to_hass()` checked "no live value yet", then awaited the recorder — and the serial reader thread keeps delivering packets during that await. The stale restored value then replaced the fresh one *and* the outlier cache, so the next few real packets were rejected as outliers. The check is now repeated after the await.
+- **Stray sensors were registered as "known" even with auto-discovery switched off.** A single packet from a neighbour's sensor called `_discovered.setdefault()` regardless of the `auto_add_entities` setting, which produced battery-low notifications and "removed automatically" cleanup log entries for sensors that had no entities at all, and blocked the battery-replacement alias for a real sensor whose new radio ID happened to match. With auto-discovery off, `_discovered` is no longer touched at all.
+- **On an options-triggered reload the old serial reader thread could still hold the port.** `async_stop()` waited a fixed 5 s for the thread, but a `readline()` blocks for up to the configured `serial_timeout` (up to 10 s). The join now waits `serial_timeout + 3` s, and the reader loop closes the serial device explicitly (`try/finally`) instead of leaving it to pyserial's garbage collection.
+- Notifications fell back to **German for every non-English** Home Assistant system language; English is the fallback now, German only for German installations.
+- Debug mode left the logger pinned at DEBUG after an options-triggered reload — the auto-off timer was cancelled without restoring the level.
+
+### Added
+
+- The initial setup step now **tests the serial port before creating the entry**. A typo'd path previously produced a working-looking entry that just logged `Serial error: …` every few seconds forever.
+- `async_remove_entry()` deletes the entry's `lacrosse_jeelink_<entry_id>_aliases` store file when the integration is removed, instead of orphaning it in `.storage` forever.
+
+### Changed
+
+- The setup description of auto-discovery no longer claims sensors are added at the *first* packet — since 1.3.0 the discovery threshold (default 2 packets within 120 s) applies.
+
 ## [1.4.5] - 2026-09-05
 
 ### Fixed

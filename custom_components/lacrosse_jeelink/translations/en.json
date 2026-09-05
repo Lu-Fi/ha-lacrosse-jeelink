@@ -12,10 +12,13 @@
         },
         "data_description": {
           "serial_port": "Select the serial port of the JeeLink USB stick or enter it manually.",
-          "auto_add_entities": "Automatically add new sensors when a packet is received for the first time.",
-          "outlier_confirm_count": "How many times the same outlier value must be reported consecutively before it is accepted as valid (2–20). Prevents erroneous jumps from single faulty readings."
+          "auto_add_entities": "Automatically add new sensors once they have been received often enough (see the discovery threshold in the options, default 2 packets within 120 s).",
+          "outlier_confirm_count": "How many consecutive readings at the same new level are needed before a jump beyond the plausibility limit is accepted as valid (2–20). Prevents erroneous jumps from single faulty readings."
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Could not open the serial port. Check the path and that no other program (FHEM, another integration) is using the stick."
     },
     "abort": {
       "already_configured": "This serial port is already configured."
@@ -47,7 +50,7 @@
           "init_commands": "Firmware init commands"
         },
         "data_description": {
-          "outlier_confirm_count": "How many times the same outlier value must be reported consecutively before it is accepted as valid (2–20).",
+          "outlier_confirm_count": "How many consecutive readings at the same new level are needed before a jump beyond the plausibility limit is accepted as valid (2–20).",
           "serial_timeout": "Blocking read timeout on the serial port. Default 1 s — only change for troubleshooting.",
           "reconnect_delay": "How long to wait before reconnecting after a serial error (1–600 s).",
           "battery_replace_timeout": "How long the battery-replacement mode stays armed after pressing the button. Default 120 s.",

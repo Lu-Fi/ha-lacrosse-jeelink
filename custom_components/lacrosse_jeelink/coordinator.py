@@ -200,6 +200,8 @@ class JeeLinkCoordinator:
         self._id_aliases: dict[int, int] = {}
         # Battery replacement mode active: old_id -> expiry timestamp
         self._replace_battery: dict[int, float] = {}
+        # Cancel handles of the expiry refresh timers (old_id -> unsub)
+        self._replace_expiry_cancels: dict[int, callable] = {}
 
         self._entry_id = entry.entry_id
         # Persistence of the ID aliases (battery replacement): without the
@@ -228,9 +230,14 @@ class JeeLinkCoordinator:
     # ── Notifications ──────────────────────────────────────────────────────────
 
     def _lang(self) -> str:
-        """'en' for an English HA system language, otherwise 'de' (fallback)."""
-        lang = (self.hass.config.language or "de").lower()
-        return "en" if lang.startswith("en") else "de"
+        """'de' for a German HA system language, otherwise 'en' (fallback).
+
+        Notification texts only exist as a DE/EN pair; English is the
+        fallback for every other system language (it used to be German,
+        which was backwards for everyone but German installations).
+        """
+        lang = (self.hass.config.language or "en").lower()
+        return "de" if lang.startswith("de") else "en"
 
     def _device_label(self, sensor_id: int) -> str:
         """Human-readable label for an already-known LaCrosse IT+ sensor:
@@ -332,10 +339,25 @@ class JeeLinkCoordinator:
             sensor_id, timeout,
         )
         self._notify_listeners()
+
         # Refresh entities once the window expires so the button attribute
         # replace_active does not incorrectly stay "true" until the next
-        # received packet.
-        async_call_later(self.hass, timeout + 1, lambda _now: self._notify_listeners())
+        # received packet. The timer target MUST be @callback-decorated:
+        # HassJob classifies anything else as HassJobType.Executor and runs
+        # it on a worker thread, where _notify_listeners' async_write_ha_state()
+        # raises - i.e. the refresh never happened (a bare lambda was used
+        # here before).
+        @callback
+        def _replace_expired(_now=None) -> None:
+            self._replace_expiry_cancels.pop(sensor_id, None)
+            self._notify_listeners()
+
+        cancel = self._replace_expiry_cancels.pop(sensor_id, None)
+        if cancel:
+            cancel()  # re-armed before expiry - don't stack timers
+        self._replace_expiry_cancels[sensor_id] = async_call_later(
+            self.hass, timeout + 1, _replace_expired
+        )
 
     def is_battery_replace_active(self, sensor_id: int) -> bool:
         """True while the battery replacement mode is armed for this sensor."""
@@ -631,20 +653,7 @@ class JeeLinkCoordinator:
                 dev_reg.async_remove_device(device.id)
 
             # Clean up internal state as well
-            self._discovered.pop(sensor_id, None)
-            self._sensor_device_infos.pop(sensor_id, None)
-            self._battery_notified.discard(sensor_id)
-            self._replace_battery.pop(sensor_id, None)
-            aliases_changed = False
-            for new_id, old_id in list(self._id_aliases.items()):
-                if sensor_id in (new_id, old_id):
-                    del self._id_aliases[new_id]
-                    aliases_changed = True
-            if aliases_changed:
-                self._schedule_alias_save()
-            for key in [k for k in list(self.sensor_states) if k[0] == sensor_id]:
-                self.sensor_states.pop(key, None)
-                self._cache.pop(key, None)
+            self.forget_sensor(sensor_id)
 
             _LOGGER.info(
                 "Sensor %s removed automatically: no data for more "
@@ -652,14 +661,60 @@ class JeeLinkCoordinator:
                 sensor_id, self.stale_cleanup_hours,
             )
 
+    @callback
+    def forget_sensor(self, sensor_id: int | str) -> None:
+        """Drop every internal trace of a sensor (does NOT touch the
+        registries - the caller has already removed, or is about to remove,
+        its device/entities).
+
+        Used by the stale cleanup and by the manual device deletion
+        (async_remove_config_entry_device). Without this the sensor stays in
+        _discovered with all its channels, so the next packet finds nothing
+        "new" to discover and the entities are never recreated.
+        """
+        self._discovered.pop(sensor_id, None)
+        self._sensor_device_infos.pop(sensor_id, None)
+        self._battery_notified.discard(sensor_id)
+        self._replace_battery.pop(sensor_id, None)
+        self._discovery_candidates.pop(sensor_id, None)
+        cancel = self._replace_expiry_cancels.pop(sensor_id, None)
+        if cancel:
+            cancel()
+        aliases_changed = False
+        for new_id, old_id in list(self._id_aliases.items()):
+            if sensor_id in (new_id, old_id):
+                del self._id_aliases[new_id]
+                aliases_changed = True
+        if aliases_changed:
+            self._schedule_alias_save()
+        for key in [k for k in list(self.sensor_states) if k[0] == sensor_id]:
+            self.sensor_states.pop(key, None)
+            self._cache.pop(key, None)
+            self._outlier_counter.pop(key, None)
+
     async def async_stop(self) -> None:
         if self._unsub_watchdog:
             self._unsub_watchdog()
             self._unsub_watchdog = None
+        for cancel in list(self._replace_expiry_cancels.values()):
+            cancel()
+        self._replace_expiry_cancels.clear()
         self._stop_event.set()
         self._reset_event.set()
         if self._thread:
-            await self.hass.async_add_executor_job(self._thread.join, 5)
+            # The reader thread can sit in a blocking readline() for up to
+            # serial_timeout seconds (configurable up to 10 s), so a fixed
+            # 5 s join would return while the old thread still holds the
+            # serial device - and the new coordinator of an options-triggered
+            # reload would then fail to open it.
+            await self.hass.async_add_executor_job(
+                self._thread.join, max(5.0, self.serial_timeout + 3)
+            )
+        # A reload while debug mode is on would otherwise leave the logger
+        # pinned at DEBUG forever: the auto-off timer is cancelled here and
+        # the new coordinator starts with debug=False.
+        if self.debug and not self.hass.is_stopping:
+            self.disable_debug()
         if self._debug_cancel:
             self._debug_cancel()
 
@@ -855,44 +910,51 @@ class JeeLinkCoordinator:
                 self.last_data_ts = time.time()
                 self._reset_event.clear()
 
-                while not self._stop_event.is_set():
-                    if self._reset_event.is_set():
-                        _LOGGER.info("Reset signal received - closing serial for reconnect")
-                        self._reset_event.clear()
-                        break
+                # try/finally: release the device promptly on the reset break
+                # and on stop, instead of leaving the close to pyserial's
+                # __del__/GC. The next connect attempt (or the coordinator of
+                # a reload) would otherwise find the port still open.
+                try:
+                    while not self._stop_event.is_set():
+                        if self._reset_event.is_set():
+                            _LOGGER.info("Reset signal received - closing serial for reconnect")
+                            self._reset_event.clear()
+                            break
 
-                    line = ser.readline().decode("utf-8", errors="ignore").strip()
-                    if not line:
-                        continue
+                        line = ser.readline().decode("utf-8", errors="ignore").strip()
+                        if not line:
+                            continue
 
-                    if "drecvintr exit" in line:
-                        _LOGGER.warning("Firmware: drecvintr exit - DTR reset")
-                        self._dtr_reset(ser)
-                        ser.write(self._init_command_bytes(include_version=False))
-                        continue
+                        if "drecvintr exit" in line:
+                            _LOGGER.warning("Firmware: drecvintr exit - DTR reset")
+                            self._dtr_reset(ser)
+                            ser.write(self._init_command_bytes(include_version=False))
+                            continue
 
-                    if "RFM12 hang" in line:
-                        _LOGGER.warning("Firmware: RFM12 hang - DTR reset")
-                        self._dtr_reset(ser)
-                        ser.write(self._init_command_bytes(include_version=False))
-                        continue
+                        if "RFM12 hang" in line:
+                            _LOGGER.warning("Firmware: RFM12 hang - DTR reset")
+                            self._dtr_reset(ser)
+                            ser.write(self._init_command_bytes(include_version=False))
+                            continue
 
-                    if line.startswith("[") and line.endswith("]"):
-                        fw = line[1:-1].strip()
-                        if fw and fw != self.firmware:
-                            self.firmware = fw
-                            _LOGGER.info("JeeLink firmware detected: %s", fw)
-                            self._call_soon_threadsafe(
-                                self._async_apply_firmware
-                            )
-                        continue
+                        if line.startswith("[") and line.endswith("]"):
+                            fw = line[1:-1].strip()
+                            if fw and fw != self.firmware:
+                                self.firmware = fw
+                                _LOGGER.info("JeeLink firmware detected: %s", fw)
+                                self._call_soon_threadsafe(
+                                    self._async_apply_firmware
+                                )
+                            continue
 
-                    if line.startswith("OK 9"):
-                        self._parse_line(line)
-                    elif line.startswith("OK EMT7110"):
-                        self._parse_emt7110_line(line)
-                    elif line.startswith("OK LS"):
-                        self._parse_levelsender_line(line)
+                        if line.startswith("OK 9"):
+                            self._parse_line(line)
+                        elif line.startswith("OK EMT7110"):
+                            self._parse_emt7110_line(line)
+                        elif line.startswith("OK LS"):
+                            self._parse_levelsender_line(line)
+                finally:
+                    ser.close()
 
             except Exception as exc:
                 _LOGGER.error(
@@ -922,9 +984,11 @@ class JeeLinkCoordinator:
     def _mark_packet_received(self) -> None:
         """Feed the radio-silence watchdog and send the all-clear if needed.
 
-        Shared by every protocol parser below: a successfully decoded
-        packet of ANY kind (LaCrosse, EMT7110, LevelSender) counts as radio
-        activity for the watchdog.
+        Shared by every protocol parser below: a received packet of ANY kind
+        (LaCrosse, EMT7110, LevelSender) counts as radio activity for the
+        watchdog - called as soon as the line has a plausible shape (right
+        prefix, enough fields), not only after the values were decoded: a
+        malformed field is a decode problem, not radio silence.
         """
         self.last_data_ts = time.time()
         if self._data_timeout_notified:
@@ -1067,9 +1131,16 @@ class JeeLinkCoordinator:
             temp_channel = "temperature2" if is_probe2 else "temperature"
             new_discoveries: list[SensorDiscovery] = []
             was_known = resolved_id in self._discovered
-            known = self._discovered.setdefault(resolved_id, set())
 
             if self.auto_add:
+                # _discovered is only touched when discovery is actually
+                # enabled: otherwise a single stray packet from a neighbour's
+                # sensor would mark it as "known" without ever creating an
+                # entity for it - which produced battery-low notifications
+                # and "removed automatically" cleanup logs for phantom
+                # sensors, and blocked the battery-replacement alias for a
+                # real sensor landing on such an ID.
+                known = self._discovered.setdefault(resolved_id, set())
                 if temp_channel not in known:
                     known.add(temp_channel)
                     new_discoveries.append(SensorDiscovery(resolved_id, temp_channel))
@@ -1211,9 +1282,9 @@ class JeeLinkCoordinator:
 
             new_discoveries: list[SensorDiscovery] = []
             was_known = resolved_id in self._discovered
-            known = self._discovered.setdefault(resolved_id, set())
 
             if self.auto_add:
+                known = self._discovered.setdefault(resolved_id, set())
                 for channel in (
                     "voltage", "current", "power", "energy", "connected", "last_seen",
                 ):
@@ -1286,9 +1357,9 @@ class JeeLinkCoordinator:
 
             new_discoveries: list[SensorDiscovery] = []
             was_known = resolved_id in self._discovered
-            known = self._discovered.setdefault(resolved_id, set())
 
             if self.auto_add:
+                known = self._discovered.setdefault(resolved_id, set())
                 for channel in ("level", "temperature", "voltage", "last_seen"):
                     if channel not in known:
                         known.add(channel)
@@ -1340,12 +1411,25 @@ class JeeLinkCoordinator:
             try:
                 delta = abs(temperature - float(last))
                 if delta > DEFAULT_TEMP_MAX_DELTA:
-                    _, count = self._outlier_counter.get(key, (temperature, 0))
-                    count += 1
+                    # Only CONSISTENT readings confirm an outlier: a genuine
+                    # jump (sensor moved, long dropout) keeps reporting the
+                    # new level, while random decode garbage differs wildly
+                    # from packet to packet and restarts the count. The
+                    # previous value was stored but never compared, so N
+                    # arbitrary garbage values confirmed each other.
+                    # Deliberately not an equality check on the stored value
+                    # (as the option text claimed): real readings fluctuate by
+                    # 0.1 degC, so a sensor would stay stuck on its old value
+                    # forever after a real jump.
+                    prev, count = self._outlier_counter.get(key, (None, 0))
+                    if prev is None or abs(temperature - prev) > DEFAULT_TEMP_MAX_DELTA:
+                        count = 1
+                    else:
+                        count += 1
                     self._outlier_counter[key] = (temperature, count)
                     if count >= self.outlier_confirm_count:
                         _LOGGER.info(
-                            "[JeeLink] Outlier confirmed (%dx same value): "
+                            "[JeeLink] Outlier confirmed (%dx consistent): "
                             "sensor=%s %s->%s degC | raw: %s",
                             count, key[0], last, temperature, raw,
                         )
@@ -1377,12 +1461,16 @@ class JeeLinkCoordinator:
             try:
                 delta = abs(humidity - float(last))
                 if delta > DEFAULT_HUM_MAX_DELTA:
-                    _, count = self._outlier_counter.get(key, (humidity, 0))
-                    count += 1
+                    # Same consistency check as in _check_temperature
+                    prev, count = self._outlier_counter.get(key, (None, 0))
+                    if prev is None or abs(humidity - prev) > DEFAULT_HUM_MAX_DELTA:
+                        count = 1
+                    else:
+                        count += 1
                     self._outlier_counter[key] = (humidity, count)
                     if count >= self.outlier_confirm_count:
                         _LOGGER.info(
-                            "[JeeLink] Outlier confirmed (%dx same value): "
+                            "[JeeLink] Outlier confirmed (%dx consistent): "
                             "sensor=%s %s->%d%% | raw: %s",
                             count, key[0], last, humidity, raw,
                         )

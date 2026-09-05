@@ -15,7 +15,7 @@ Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and hu
 - **Automatic sensor discovery**: new sensors appear as devices with temperature, humidity (if present), calculated **dew point** (Magnus formula, identical to FHEM) and a battery-low binary sensor
 - **EMT7110** (LaCrosse power/energy plug) and **LevelSender** (DIY tank/cistern fill-level sender) telegrams are decoded too — the LaCrosseITPlusReader sketch already sends them over the same serial port. Each gets its own device and its own ID namespace, so they never show up mislabelled as a LaCrosse weather sensor. See [Entities](#entities) below.
 - Second temperature channel (`temperature2`) for sensors with an external probe
-- **Outlier filtering**: absolute limits (−50…60 °C, 1…100 %) plus delta filters (10 K / 20 % jumps); a genuine jump is accepted after N consecutive identical readings (configurable)
+- **Outlier filtering**: absolute limits (−50…60 °C, 1…100 %) plus delta filters (10 K / 20 % jumps); a genuine jump is accepted after N consecutive readings at the same new level (configurable)
 - **Discovery threshold** (like FHEM's `autoCreateThreshold`): new sensors are only created after N packets within T seconds (default 2/120 s) — one-shot decode flukes and fringe receptions never clutter the registry
 - **Battery replacement mode** (like FHEM's `replaceBatteryForSec`): press the per-sensor button, swap the battery within the configured window, and the sensor's new random radio ID is mapped onto the existing device — entities and history are preserved
 - Values are **restored after a restart** (RestoreSensor) until fresh packets arrive
@@ -79,7 +79,7 @@ Copy `custom_components/lacrosse_jeelink/` into your `config/custom_components/`
 |---|---|
 | Serial port | The JeeLink's serial device. The dropdown lists detected ports; you can also type a path manually — a stable `/dev/serial/by-id/…` symlink is recommended over `/dev/ttyUSBx`. |
 | Auto-discover sensors | When on (default), every sensor whose packet is received creates its entities automatically. Turn off once all your sensors are known to ignore neighbours' sensors. |
-| Outlier confirmation count | How many times the same outlier value must arrive consecutively before it is accepted as real (2–20, default 5). |
+| Outlier confirmation count | How many consecutive readings at the same new level must arrive before a jump beyond the delta limit is accepted as real (2–20, default 5). |
 
 ### Options (gear icon → "Configure", applied immediately via reload)
 
