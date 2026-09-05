@@ -42,7 +42,6 @@ from .const import (
     DEFAULT_DISCOVERY_MIN_PACKETS,
     DEFAULT_DISCOVERY_WINDOW_SEC,
     DEFAULT_INIT_COMMANDS,
-    DEFAULT_NOTIFY_ENTITY,
     DEFAULT_RECONNECT_DELAY,
     DEFAULT_SERIAL_TIMEOUT,
     DEFAULT_STALE_CLEANUP_HOURS,
@@ -213,9 +212,15 @@ class JeeLinkOptionsFlow(config_entries.OptionsFlow):
                     CONF_NOTIFY_ENABLED,
                     default=self._current(CONF_NOTIFY_ENABLED, True),
                 ): BooleanSelector(),
+                # suggested_value, not default: the frontend drops an empty
+                # picker from the submission, and a default of "" would then
+                # be filled back in and rejected by the EntitySelector.
+                # Left empty, the key is simply absent -> no notifications.
                 vol.Optional(
                     CONF_NOTIFY_ENTITY,
-                    default=self._current(CONF_NOTIFY_ENTITY, DEFAULT_NOTIFY_ENTITY),
+                    description={
+                        "suggested_value": self._current(CONF_NOTIFY_ENTITY, None)
+                    },
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         domain="notify", integration="telegram_bot"

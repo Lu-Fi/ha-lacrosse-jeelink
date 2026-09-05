@@ -2,6 +2,12 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.5] - 2026-09-05
+
+### Fixed
+
+- **The options dialog could not be saved at all without a Telegram entity.** Every save failed with `Entity is neither a valid entity ID nor a valid UUID` on the "Telegram entity for messages" field, no matter which setting was actually being changed ([#3](https://github.com/Lu-Fi/ha-lacrosse-jeelink/issues/3)). The field was declared `vol.Optional(..., default="")`: the frontend drops an empty picker from the submission, voluptuous then filled the `""` default back in, and the `EntitySelector` rejected it as an invalid entity ID. Affected everyone not using Telegram, since the initial release. The field now uses `suggested_value` instead of `default`, so an empty picker is simply left out of the saved options (= no notifications, as before).
+
 ## [1.4.4] - 2026-08-30
 
 ### Fixed
