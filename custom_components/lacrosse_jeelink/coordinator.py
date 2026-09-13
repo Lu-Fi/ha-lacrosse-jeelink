@@ -215,6 +215,11 @@ class JeeLinkCoordinator:
         self._thread: threading.Thread | None = None
         self._debug_cancel = None
         self._sensor_device_infos: dict[int | str, DeviceInfo] = {}
+        # Registry id of the bridge device. Per-sensor devices reference it
+        # as via_device_id (see get_sensor_device_info) - the replacement
+        # for the deprecated via_device identifier tuple, which needs a real
+        # device id and therefore a registered bridge device.
+        self._bridge_device_id: str | None = None
 
         # Bridge device (for the reset button and debug switch). The model
         # is deliberately generic: what matters is the LaCrosseITPlusReader
@@ -255,8 +260,8 @@ class JeeLinkCoordinator:
 
         async def _lookup() -> str | None:
             dev_reg = dr.async_get(self.hass)
-            device = dev_reg.async_get_device(
-                identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")}
+            device = dev_reg.async_get_device_by_identifier(
+                (DOMAIN, f"{self._entry_id}_{sensor_id}"), self._entry_id
             )
             return device.name_by_user if device else None
 
@@ -399,6 +404,43 @@ class JeeLinkCoordinator:
                 return "levelsender"
         return "lacrosse"
 
+    @callback
+    def register_bridge_device(self) -> str:
+        """Register the bridge device and remember its registry id.
+
+        Per-sensor devices are linked to the bridge through via_device_id,
+        which is the bridge's *registry id* - unlike the deprecated
+        via_device it cannot be written as an identifier tuple and only
+        exists once the bridge device is actually registered. Home Assistant
+        rejects a device info whose via_device_id is not a registered device
+        id and drops the entity entirely ("Not adding entity with invalid
+        device info"), so the bridge is created explicitly here - from
+        async_setup_entry, before the platforms are forwarded and therefore
+        before any per-sensor device info can be built - instead of relying
+        on the bridge entities of the binary_sensor/button/switch platforms
+        happening to be registered first.
+        """
+        device = dr.async_get(self.hass).async_get_or_create(
+            config_entry_id=self._entry_id, **self.device_info
+        )
+        self._bridge_device_id = device.id
+        return device.id
+
+    def _via_bridge_device_id(self) -> str | None:
+        """Registry id of the bridge device, or None while it does not exist.
+
+        Looked up lazily (and cached) so a device info that was built before
+        the bridge device was registered still picks up the link afterwards
+        instead of staying orphaned for the lifetime of the coordinator.
+        """
+        if self._bridge_device_id is None:
+            device = dr.async_get(self.hass).async_get_device_by_identifier(
+                (DOMAIN, self._entry_id), self._entry_id
+            )
+            if device is not None:
+                self._bridge_device_id = device.id
+        return self._bridge_device_id
+
     def get_sensor_device_info(self, sensor_id: int | str) -> DeviceInfo:
         """DeviceInfo for a single discovered sensor, linked to the bridge.
 
@@ -407,7 +449,8 @@ class JeeLinkCoordinator:
         device name/manufacturer/model so they don't show up mislabelled
         as "LaCrosse" sensors.
         """
-        if sensor_id not in self._sensor_device_infos:
+        info = self._sensor_device_infos.get(sensor_id)
+        if info is None:
             kind = self._sensor_kind(sensor_id)
             if kind == "emt7110":
                 raw_id = sensor_id.split("_", 1)[1]
@@ -417,7 +460,6 @@ class JeeLinkCoordinator:
                     manufacturer="LaCrosse Technology",
                     model="EMT7110 Energy Sensor",
                     serial_number=raw_id,
-                    via_device=(DOMAIN, self._entry_id),
                 )
             elif kind == "levelsender":
                 raw_id = sensor_id.split("_", 1)[1]
@@ -427,7 +469,6 @@ class JeeLinkCoordinator:
                     manufacturer="DIY / LevelSender",
                     model="Fill-Level Sensor",
                     serial_number=raw_id,
-                    via_device=(DOMAIN, self._entry_id),
                 )
             else:
                 info = DeviceInfo(
@@ -436,10 +477,18 @@ class JeeLinkCoordinator:
                     manufacturer="LaCrosse Technology",
                     model="IT+ Sensor",
                     serial_number=str(sensor_id),
-                    via_device=(DOMAIN, self._entry_id),
                 )
             self._sensor_device_infos[sensor_id] = info
-        return self._sensor_device_infos[sensor_id]
+        # Parent link to the bridge device. Filled in (and kept in the cached
+        # dict) as soon as the bridge device id is known; deliberately left
+        # out while it is not, because an unresolvable via_device_id would
+        # cost the entity its whole device info, while a missing one only
+        # costs the - then unknowable - hierarchy line in the UI.
+        if "via_device_id" not in info:
+            bridge_device_id = self._via_bridge_device_id()
+            if bridge_device_id is not None:
+                info["via_device_id"] = bridge_device_id
+        return info
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -603,8 +652,8 @@ class JeeLinkCoordinator:
                 continue
             if last >= cutoff:
                 continue
-            device = dev_reg.async_get_device(
-                identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")}
+            device = dev_reg.async_get_device_by_identifier(
+                (DOMAIN, f"{self._entry_id}_{sensor_id}"), self._entry_id
             )
             if device and (device.name_by_user or device.area_id or device.labels):
                 _LOGGER.debug(
@@ -849,7 +898,9 @@ class JeeLinkCoordinator:
         """Store the detected firmware as sw_version on the bridge device
         (analogous to FHEM's model/settings internals)."""
         dev_reg = dr.async_get(self.hass)
-        device = dev_reg.async_get_device(identifiers={(DOMAIN, self._entry_id)})
+        device = dev_reg.async_get_device_by_identifier(
+            (DOMAIN, self._entry_id), self._entry_id
+        )
         if device:
             dev_reg.async_update_device(device.id, sw_version=self.firmware)
         self._notify_listeners()

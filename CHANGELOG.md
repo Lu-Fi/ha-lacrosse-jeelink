@@ -2,6 +2,13 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.0] - 2026-09-13
+
+### Changed
+
+- **Home Assistant logged deprecation warnings for this integration, for device-registry calls that stop working in HA 2027.8.0.** Device identifiers are no longer unique across config entries, so both `device_registry.async_get_device(identifiers=…)` and the `via_device` identifier tuple in a device info have been deprecated in favour of lookups scoped to the config entry. All three `async_get_device()` calls (device name in notifications, stale-sensor cleanup, firmware `sw_version` on the bridge) now use `async_get_device_by_identifier(identifier, entry_id)`, and the per-sensor devices link to the bridge through `via_device_id` — the bridge's actual registry id — instead of `via_device`. That id only exists once the bridge device is registered, and Home Assistant refuses a device info whose `via_device_id` does not resolve (dropping the entity outright), so the bridge device is now created explicitly in `async_setup_entry()` before the platforms are forwarded, instead of relying on whichever platform happens to add a bridge entity first. Purely an API migration: the device hierarchy shown in the UI is unchanged.
+- Raised the minimum Home Assistant version in `hacs.json` from `2026.3.0` to `2026.8.0` — `async_get_device_by_identifier()` and the `via_device_id` device-info key were introduced in 2026.8, so the migrated code cannot run on anything older.
+
 ## [1.5.0] - 2026-09-05
 
 ### Fixed

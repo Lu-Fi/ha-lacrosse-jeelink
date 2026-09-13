@@ -14,6 +14,14 @@ PLATFORMS = ["sensor", "binary_sensor", "button", "switch"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = JeeLinkCoordinator(hass, entry)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    # Register the bridge device BEFORE the platforms are set up: every
+    # per-sensor device links to it through via_device_id, which is the
+    # bridge's registry id - and that only exists once the bridge device is
+    # registered. Leaving that to whichever platform happens to add a bridge
+    # entity first would make the link depend on setup order.
+    coordinator.register_bridge_device()
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Reconstruct known sensors from the entity registry AFTER all
@@ -67,7 +75,7 @@ async def async_remove_config_entry_device(
 
     The bridge device itself is NOT removable: it carries the connected /
     radio-silence / reset / debug entities of this very config entry, and
-    every per-sensor device links to it via via_device.
+    every per-sensor device links to it via via_device_id.
     """
     if (DOMAIN, entry.entry_id) in device_entry.identifiers:
         return False
