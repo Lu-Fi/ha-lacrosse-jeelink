@@ -66,6 +66,12 @@ class LaCrosseBatteryReplaceButton(ButtonEntity):
     After pressing, the configured window (default 120 s) is open to swap
     the battery. The sensor picks a new random radio ID - the integration
     detects it automatically and maps it onto the existing sensor.
+
+    Note: if several replace windows are armed at the same time, the first
+    one armed claims the next new-battery packet, regardless of which sensor
+    it physically came from - the radio telegram carries no hint about the
+    old ID. This matches FHEM's replaceBatteryForSec; swap batteries one
+    sensor at a time if you want the mapping to be unambiguous.
     """
 
     _attr_icon = "mdi:battery-sync"
@@ -100,8 +106,11 @@ class LaCrosseBatteryReplaceButton(ButtonEntity):
         }
 
     async def async_added_to_hass(self) -> None:
-        # Listener to update the replace_active state in real time
-        self._remove_listener = self._coordinator.async_add_listener(self._on_update)
+        # Listener to update the replace_active state in real time, keyed on
+        # this button's sensor so unrelated sensors' packets don't refresh it.
+        self._remove_listener = self._coordinator.async_add_listener(
+            self._on_update, self._sensor_id
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener:

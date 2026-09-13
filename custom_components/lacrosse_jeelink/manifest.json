@@ -5,11 +5,13 @@
     "@Lu-Fi"
   ],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [
+    "logger"
+  ],
   "documentation": "https://github.com/Lu-Fi/ha-lacrosse-jeelink",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Lu-Fi/ha-lacrosse-jeelink/issues",
   "loggers": ["custom_components.lacrosse_jeelink"],
   "requirements": ["pyserial==3.5"],
-  "version": "1.6.0"
+  "version": "1.7.0"
 }

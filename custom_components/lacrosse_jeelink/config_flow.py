@@ -123,15 +123,32 @@ class JeeLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             errors[CONF_SERIAL_PORT] = "cannot_connect"
 
+        # Re-displaying the form after cannot_connect: keep everything the
+        # user typed. _port_selector() already puts a hand-entered path into
+        # the dropdown's options, but without a default it was merely listed,
+        # not selected - so the field came back looking empty and the path
+        # had to be typed again just to correct a neighbouring setting.
+        previous = user_input or {}
+        typed_port = previous.get(CONF_SERIAL_PORT)
         port_sel = await self.hass.async_add_executor_job(
-            _port_selector, (user_input or {}).get(CONF_SERIAL_PORT)
+            _port_selector, typed_port
+        )
+        port_key = (
+            vol.Required(CONF_SERIAL_PORT, default=typed_port)
+            if typed_port
+            else vol.Required(CONF_SERIAL_PORT)
         )
         schema = vol.Schema(
             {
-                vol.Required(CONF_SERIAL_PORT): port_sel,
-                vol.Required(CONF_AUTO_ADD, default=True): BooleanSelector(),
+                port_key: port_sel,
                 vol.Required(
-                    CONF_OUTLIER_CONFIRM_COUNT, default=OUTLIER_CONFIRM_COUNT
+                    CONF_AUTO_ADD, default=previous.get(CONF_AUTO_ADD, True)
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_OUTLIER_CONFIRM_COUNT,
+                    default=previous.get(
+                        CONF_OUTLIER_CONFIRM_COUNT, OUTLIER_CONFIRM_COUNT
+                    ),
                 ): NumberSelector(
                     NumberSelectorConfig(min=2, max=20, step=1, mode=NumberSelectorMode.BOX)
                 ),
@@ -156,10 +173,26 @@ class JeeLinkOptionsFlow(config_entries.OptionsFlow):
         return self._entry.options.get(key, self._entry.data.get(key, default))
 
     async def async_step_init(self, user_input=None):
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            port = user_input.get(CONF_SERIAL_PORT)
+            # The entry's unique_id follows the port actually in use (kept in
+            # sync in async_setup_entry), so the port must be rejected here if
+            # another entry already owns it: the initial setup's
+            # _abort_if_unique_id_configured() only guards new entries and
+            # never sees a port changed later through this dialog.
+            if port and any(
+                other.entry_id != self._entry.entry_id
+                and other.unique_id == port
+                for other in self.hass.config_entries.async_entries(DOMAIN)
+            ):
+                errors[CONF_SERIAL_PORT] = "already_configured"
+            else:
+                return self.async_create_entry(title="", data=user_input)
 
-        current_port = self._current(CONF_SERIAL_PORT, "")
+        current_port = (user_input or {}).get(
+            CONF_SERIAL_PORT
+        ) or self._current(CONF_SERIAL_PORT, "")
         port_sel = await self.hass.async_add_executor_job(_port_selector, current_port)
 
         schema = vol.Schema(
@@ -281,4 +314,6 @@ class JeeLinkOptionsFlow(config_entries.OptionsFlow):
                 ): BooleanSelector(),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(
+            step_id="init", data_schema=schema, errors=errors
+        )

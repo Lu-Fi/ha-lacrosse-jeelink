@@ -64,6 +64,9 @@
           "init_commands": "Kommandos (durch Leerzeichen getrennt), die bei jedem Verbinden an den Sketch gehen (wie FHEMs initCommands). Standard '7m 10t' = alle drei Datenraten im 10-s-Wechsel. Beispiel für feste Rate: '0m' plus '17241r'."
         }
       }
+    },
+    "error": {
+      "already_configured": "Dieser serielle Port wird bereits von einem anderen JeeLink-Eintrag verwendet."
     }
   },
   "entity": {

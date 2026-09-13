@@ -74,6 +74,8 @@ class JeeLinkConnectedSensor(BinarySensorEntity):
         return {"firmware": self._coordinator.firmware}
 
     async def async_added_to_hass(self) -> None:
+        # Bridge-level entity: registers unkeyed (broadcast), so it is only
+        # refreshed on connection/firmware changes - not on every packet.
         self._remove_listener = self._coordinator.async_add_listener(self._on_update)
 
     async def async_will_remove_from_hass(self) -> None:
@@ -115,6 +117,7 @@ class JeeLinkRadioSilenceSensor(BinarySensorEntity):
         return self._coordinator.data_stale
 
     async def async_added_to_hass(self) -> None:
+        # Bridge-level entity: unkeyed (broadcast) registration.
         self._remove_listener = self._coordinator.async_add_listener(self._on_update)
 
     async def async_will_remove_from_hass(self) -> None:
@@ -161,7 +164,9 @@ class JeeLinkConsumerConnectedSensor(BinarySensorEntity):
         return bool(val) if val is not None else None
 
     async def async_added_to_hass(self) -> None:
-        self._remove_listener = self._coordinator.async_add_listener(self._on_update)
+        self._remove_listener = self._coordinator.async_add_listener(
+            self._on_update, self._disc.sensor_id
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener:
@@ -211,7 +216,9 @@ class LaCrosseBatterySensor(BinarySensorEntity):
         return bool(val) if val is not None else None
 
     async def async_added_to_hass(self) -> None:
-        self._remove_listener = self._coordinator.async_add_listener(self._on_update)
+        self._remove_listener = self._coordinator.async_add_listener(
+            self._on_update, self._disc.sensor_id
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener:

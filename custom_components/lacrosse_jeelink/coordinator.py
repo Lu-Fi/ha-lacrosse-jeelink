@@ -17,7 +17,6 @@ OK 9 format byte layout (parts[2..6]):
 """
 from __future__ import annotations
 
-import asyncio
 import datetime
 import logging
 import math
@@ -36,6 +35,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
+from homeassistant.util.async_ import run_callback_threadsafe
 
 from .const import (
     DOMAIN,
@@ -76,6 +76,32 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Level names the logger integration's set_level service accepts, lowest
+# first. Used to translate a remembered logging level back into a service
+# argument when debug mode is switched off.
+_LEVEL_NAMES = (
+    (logging.NOTSET, "notset"),
+    (logging.DEBUG, "debug"),
+    (logging.INFO, "info"),
+    (logging.WARNING, "warning"),
+    (logging.ERROR, "error"),
+    (logging.CRITICAL, "critical"),
+)
+
+
+def _level_name(level: int) -> str:
+    """Service-compatible name for a logging level.
+
+    logging.getLevelName() would happily return "Level 25" for a custom
+    level, which the logger integration rejects - so a level in between two
+    standard ones is rounded down to the nearest name it does accept.
+    """
+    name = "notset"
+    for value, candidate in _LEVEL_NAMES:
+        if level >= value:
+            name = candidate
+    return name
 
 
 # ── Dew point (Magnus formula, identical to FHEM LaCrosse_CalcDewpoint) ───────
@@ -193,7 +219,14 @@ class JeeLinkCoordinator:
         # Outlier confirmation: key -> (value, consecutive_count)
         self._outlier_counter: dict[tuple, tuple] = {}
 
+        # Bridge-level ("broadcast") listeners: connection state, radio
+        # silence, debug switch. Fired only by unkeyed _notify_listeners()
+        # calls, i.e. on the rare bridge events - not on every radio packet.
         self._state_listeners: list = []
+        # Per-sensor listeners: sensor_id -> [callback, ...]. Every entity
+        # belonging to a discovered sensor registers here, so a packet only
+        # rewrites the state of that one sensor's entities.
+        self._keyed_listeners: dict[int | str, list] = {}
         self._discovery_callbacks: list = []
 
         # Battery replacement: new_id -> old_id (alias after ID change)
@@ -214,6 +247,11 @@ class JeeLinkCoordinator:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._debug_cancel = None
+        # Log level of this integration's logger at the moment debug mode
+        # was switched on, so switching it off restores exactly what the
+        # user had configured (logger: YAML, logger.set_level, ...) instead
+        # of unconditionally forcing "warning" onto them.
+        self._debug_prev_level: int | None = None
         self._sensor_device_infos: dict[int | str, DeviceInfo] = {}
         # Registry id of the bridge device. Per-sensor devices reference it
         # as via_device_id (see get_sensor_device_info) - the replacement
@@ -256,9 +294,17 @@ class JeeLinkCoordinator:
         May be called from the serial reader thread. The device registry
         read is marshalled onto the event loop (like every other hass
         interaction in this file) instead of touched directly, to respect
-        its loop affinity."""
+        its loop affinity.
 
-        async def _lookup() -> str | None:
+        The lookup is a plain synchronous registry read, so it is scheduled
+        with run_callback_threadsafe() rather than wrapped in a coroutine
+        and handed to run_coroutine_threadsafe(): the latter needs a full
+        task to be created and scheduled before the reader thread's join
+        can return, which blocked the reader for noticeably longer (up to
+        the 2 s timeout on a busy loop) for what is a dictionary lookup."""
+
+        @callback
+        def _lookup() -> str | None:
             dev_reg = dr.async_get(self.hass)
             device = dev_reg.async_get_device_by_identifier(
                 (DOMAIN, f"{self._entry_id}_{sensor_id}"), self._entry_id
@@ -266,8 +312,8 @@ class JeeLinkCoordinator:
             return device.name_by_user if device else None
 
         try:
-            name_by_user = asyncio.run_coroutine_threadsafe(
-                _lookup(), self.hass.loop
+            name_by_user = run_callback_threadsafe(
+                self.hass.loop, _lookup
             ).result(timeout=2)
         except Exception:  # noqa: BLE001
             name_by_user = None
@@ -343,7 +389,7 @@ class JeeLinkCoordinator:
             "please swap the battery now",
             sensor_id, timeout,
         )
-        self._notify_listeners()
+        self._notify_listeners(sensor_id)
 
         # Refresh entities once the window expires so the button attribute
         # replace_active does not incorrectly stay "true" until the next
@@ -355,7 +401,7 @@ class JeeLinkCoordinator:
         @callback
         def _replace_expired(_now=None) -> None:
             self._replace_expiry_cancels.pop(sensor_id, None)
-            self._notify_listeners()
+            self._notify_listeners(sensor_id)
 
         cancel = self._replace_expiry_cancels.pop(sensor_id, None)
         if cancel:
@@ -382,8 +428,16 @@ class JeeLinkCoordinator:
         return self._id_aliases.get(sensor_id, sensor_id)
 
     def _schedule_alias_save(self) -> None:
-        """Persist the alias table (thread-safe from the reader thread)."""
-        data = {str(k): v for k, v in self._id_aliases.items()}
+        """Persist the alias table (thread-safe from the reader thread).
+
+        The dict is snapshotted with dict() before being iterated: this runs
+        on the serial reader thread, while forget_sensor() (stale cleanup,
+        manual device removal) deletes from the very same _id_aliases on the
+        event loop - iterating it live could raise "dictionary changed size
+        during iteration", which used to tear down the whole serial
+        connection instead of dropping one line.
+        """
+        data = {str(k): v for k, v in dict(self._id_aliases).items()}
 
         def _save() -> None:
             self._alias_store.async_delay_save(lambda: data, 1.0)
@@ -419,27 +473,18 @@ class JeeLinkCoordinator:
         before any per-sensor device info can be built - instead of relying
         on the bridge entities of the binary_sensor/button/switch platforms
         happening to be registered first.
+
+        Because this runs before the platforms are forwarded, and every
+        caller below (per-sensor device info, firmware sw_version) only
+        runs after platform setup or after the serial reader thread has
+        been started, self._bridge_device_id is guaranteed to be set from
+        then on - no lazy fallback lookup is needed anywhere.
         """
         device = dr.async_get(self.hass).async_get_or_create(
             config_entry_id=self._entry_id, **self.device_info
         )
         self._bridge_device_id = device.id
         return device.id
-
-    def _via_bridge_device_id(self) -> str | None:
-        """Registry id of the bridge device, or None while it does not exist.
-
-        Looked up lazily (and cached) so a device info that was built before
-        the bridge device was registered still picks up the link afterwards
-        instead of staying orphaned for the lifetime of the coordinator.
-        """
-        if self._bridge_device_id is None:
-            device = dr.async_get(self.hass).async_get_device_by_identifier(
-                (DOMAIN, self._entry_id), self._entry_id
-            )
-            if device is not None:
-                self._bridge_device_id = device.id
-        return self._bridge_device_id
 
     def get_sensor_device_info(self, sensor_id: int | str) -> DeviceInfo:
         """DeviceInfo for a single discovered sensor, linked to the bridge.
@@ -448,6 +493,13 @@ class JeeLinkCoordinator:
         "ls_<id>") for EMT7110/LevelSender - each protocol gets its own
         device name/manufacturer/model so they don't show up mislabelled
         as "LaCrosse" sensors.
+
+        The device NAME carries the radio ID in decimal and in hex, because
+        FHEM's 36_LaCrosse.pm / 36_EMT7110.pm name their devices by the hex
+        form (%02X for LaCrosse, %02X%02X for EMT7110) - users migrating
+        from FHEM know their sensors by exactly that. serial_number and the
+        identifiers stay decimal: they must not change for installations
+        that already exist.
         """
         info = self._sensor_device_infos.get(sensor_id)
         if info is None:
@@ -456,10 +508,11 @@ class JeeLinkCoordinator:
                 raw_id = sensor_id.split("_", 1)[1]
                 info = DeviceInfo(
                     identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")},
-                    name=f"LaCrosse EMT7110 {raw_id}",
+                    name=f"LaCrosse EMT7110 {raw_id}{self._hex_suffix(raw_id, 4)}",
                     manufacturer="LaCrosse Technology",
                     model="EMT7110 Energy Sensor",
                     serial_number=raw_id,
+                    via_device_id=self._bridge_device_id,
                 )
             elif kind == "levelsender":
                 raw_id = sensor_id.split("_", 1)[1]
@@ -469,26 +522,34 @@ class JeeLinkCoordinator:
                     manufacturer="DIY / LevelSender",
                     model="Fill-Level Sensor",
                     serial_number=raw_id,
+                    via_device_id=self._bridge_device_id,
                 )
             else:
                 info = DeviceInfo(
                     identifiers={(DOMAIN, f"{self._entry_id}_{sensor_id}")},
-                    name=f"LaCrosse Sensor {sensor_id}",
+                    name=f"LaCrosse Sensor {sensor_id}"
+                         f"{self._hex_suffix(sensor_id, 2)}",
                     manufacturer="LaCrosse Technology",
                     model="IT+ Sensor",
                     serial_number=str(sensor_id),
+                    via_device_id=self._bridge_device_id,
                 )
             self._sensor_device_infos[sensor_id] = info
-        # Parent link to the bridge device. Filled in (and kept in the cached
-        # dict) as soon as the bridge device id is known; deliberately left
-        # out while it is not, because an unresolvable via_device_id would
-        # cost the entity its whole device info, while a missing one only
-        # costs the - then unknowable - hierarchy line in the UI.
-        if "via_device_id" not in info:
-            bridge_device_id = self._via_bridge_device_id()
-            if bridge_device_id is not None:
-                info["via_device_id"] = bridge_device_id
         return info
+
+    @staticmethod
+    def _hex_suffix(raw_id, digits: int) -> str:
+        """' (0x2A)' for a numeric radio ID, '' for anything unparseable.
+
+        FHEM names LaCrosse/EMT7110 devices by the hex ID; showing it next
+        to the decimal one is what makes a migrated installation
+        recognisable. LevelSender has no hex convention in FHEM and is left
+        decimal-only.
+        """
+        try:
+            return f" (0x{int(raw_id):0{digits}X})"
+        except (TypeError, ValueError):
+            return ""
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -720,6 +781,20 @@ class JeeLinkCoordinator:
         (async_remove_config_entry_device). Without this the sensor stays in
         _discovered with all its channels, so the next packet finds nothing
         "new" to discover and the entities are never recreated.
+
+        Known, deliberately unguarded race: this runs on the event loop
+        while the serial reader thread may be in the middle of _parse_line()
+        for the same sensor, holding a reference to the very channel set
+        popped here. If a packet is being processed at that instant, the
+        reader can re-add the sensor and schedule a discovery for channels
+        whose entities still exist, so async_add_entities() sees a duplicate
+        unique_id - Home Assistant logs and drops it, so the outcome is a
+        noisy log line, never a wrong state. A lock around _discovered would
+        NOT close the window: the discovery is handed to the event loop with
+        call_soon_threadsafe and therefore lands after the critical section
+        either way. Closing it properly would mean funnelling entity
+        creation through a registry check, which costs far more than the
+        one log line it saves.
         """
         self._discovered.pop(sensor_id, None)
         self._sensor_device_infos.pop(sensor_id, None)
@@ -784,17 +859,53 @@ class JeeLinkCoordinator:
         except RuntimeError:
             pass
 
-    def async_add_listener(self, listener) -> callable:
-        self._state_listeners.append(listener)
-        def remove():
-            if listener in self._state_listeners:
-                self._state_listeners.remove(listener)
-        return remove
+    def async_add_listener(self, listener, sensor_id: int | str | None = None) -> callable:
+        """Register a state listener; returns the unregister callable.
+
+        Pass the sensor_id of the entity's sensor to be woken ONLY by
+        updates of that sensor. sensor_id=None registers a bridge-level
+        broadcast listener (connection state, radio silence, debug switch),
+        which is fired by the rare unkeyed _notify_listeners() calls.
+
+        Before this was keyed, every radio packet rewrote the state of every
+        entity of every sensor: with ~10 sensors and up to three
+        _notify_listeners() calls per LaCrosse packet, that was a couple of
+        hundred async_write_ha_state() calls several times a second, for a
+        single sensor's temperature having moved by 0.1 degC.
+        """
+        if sensor_id is None:
+            self._state_listeners.append(listener)
+
+            def remove_broadcast():
+                if listener in self._state_listeners:
+                    self._state_listeners.remove(listener)
+
+            return remove_broadcast
+
+        self._keyed_listeners.setdefault(sensor_id, []).append(listener)
+
+        def remove_keyed():
+            listeners = self._keyed_listeners.get(sensor_id)
+            if listeners and listener in listeners:
+                listeners.remove(listener)
+                if not listeners:
+                    self._keyed_listeners.pop(sensor_id, None)
+
+        return remove_keyed
 
     @callback
-    def _notify_listeners(self) -> None:
-        for cb in self._state_listeners:
+    def _notify_listeners(self, sensor_id: int | str | None = None) -> None:
+        """Refresh listeners. With a sensor_id only that sensor's entities,
+        without one every registered listener (bridge-level events)."""
+        if sensor_id is not None:
+            for cb in list(self._keyed_listeners.get(sensor_id, ())):
+                cb()
+            return
+        for cb in list(self._state_listeners):
             cb()
+        for listeners in list(self._keyed_listeners.values()):
+            for cb in list(listeners):
+                cb()
 
     # ── Discovery callbacks ────────────────────────────────────────────────────
 
@@ -818,7 +929,37 @@ class JeeLinkCoordinator:
 
     # ── Debug mode ─────────────────────────────────────────────────────────────
 
+    # Logger name whose level the debug switch drives (same as the
+    # "loggers" entry in manifest.json).
+    _DEBUG_LOGGER = "custom_components.lacrosse_jeelink"
+
+    def _async_set_log_level(self, level: str) -> None:
+        """Ask the logger integration to set this integration's log level.
+
+        Guarded by has_service(): without the logger integration loaded the
+        service call raises ServiceNotFound inside a detached task, i.e. an
+        unhandled-exception traceback in the log instead of a working (or at
+        worst silently skipped) debug switch. manifest.json additionally
+        declares "logger" as a dependency so Home Assistant loads it for us
+        and the guard practically never trips.
+        """
+        if not self.hass.services.has_service("logger", "set_level"):
+            _LOGGER.debug(
+                "logger integration not available - log level left unchanged"
+            )
+            return
+        self.hass.async_create_task(
+            self.hass.services.async_call(
+                "logger", "set_level", {self._DEBUG_LOGGER: level}
+            )
+        )
+
     def enable_debug(self) -> None:
+        if not self.debug:
+            # Remember what the level was BEFORE we forced it to debug, so
+            # disable_debug() can put it back instead of overriding a level
+            # the user deliberately configured (logger: YAML, logger.set_level).
+            self._debug_prev_level = logging.getLogger(self._DEBUG_LOGGER).level
         self.debug = True
         _LOGGER.info(
             "[DEBUG] Debug mode enabled - auto-off in %ds", self.debug_timeout
@@ -828,12 +969,7 @@ class JeeLinkCoordinator:
         self._debug_cancel = async_call_later(
             self.hass, self.debug_timeout, self._debug_auto_off
         )
-        self.hass.async_create_task(
-            self.hass.services.async_call(
-                "logger", "set_level",
-                {"custom_components.lacrosse_jeelink": "debug"},
-            )
-        )
+        self._async_set_log_level("debug")
         self._notify_listeners()
 
     def disable_debug(self) -> None:
@@ -842,28 +978,21 @@ class JeeLinkCoordinator:
             self._debug_cancel()
             self._debug_cancel = None
         _LOGGER.info("[DEBUG] Debug mode disabled")
-        self.hass.async_create_task(
-            self.hass.services.async_call(
-                "logger", "set_level",
-                {"custom_components.lacrosse_jeelink": "warning"},
-            )
-        )
+        # Restore the remembered level (NOTSET = "inherit again", which is
+        # what an untouched logger has) rather than hardcoding "warning".
+        level = logging.NOTSET if self._debug_prev_level is None else self._debug_prev_level
+        self._debug_prev_level = None
+        self._async_set_log_level(_level_name(level))
         self._notify_listeners()
 
     @callback
     def _debug_auto_off(self, _now=None) -> None:
-        self.debug = False
-        self._debug_cancel = None
+        """Auto-off timer: same teardown as the switch, no duplicated body."""
         _LOGGER.info(
             "[DEBUG] Debug mode ended automatically after %ds", self.debug_timeout
         )
-        self.hass.async_create_task(
-            self.hass.services.async_call(
-                "logger", "set_level",
-                {"custom_components.lacrosse_jeelink": "warning"},
-            )
-        )
-        self._notify_listeners()
+        self._debug_cancel = None  # this very timer just fired
+        self.disable_debug()
 
     def _debug_log(self, msg: str) -> None:
         if self.debug:
@@ -896,13 +1025,15 @@ class JeeLinkCoordinator:
     @callback
     def _async_apply_firmware(self) -> None:
         """Store the detected firmware as sw_version on the bridge device
-        (analogous to FHEM's model/settings internals)."""
-        dev_reg = dr.async_get(self.hass)
-        device = dev_reg.async_get_device_by_identifier(
-            (DOMAIN, self._entry_id), self._entry_id
-        )
-        if device:
-            dev_reg.async_update_device(device.id, sw_version=self.firmware)
+        (analogous to FHEM's model/settings internals).
+
+        Only ever reached from the serial reader thread, which is started
+        after register_bridge_device(), so the bridge's registry id is
+        already known and no lookup is needed."""
+        if self._bridge_device_id:
+            dr.async_get(self.hass).async_update_device(
+                self._bridge_device_id, sw_version=self.firmware
+            )
         self._notify_listeners()
 
     def _set_connected(self, connected: bool, reason: str = "") -> None:
@@ -944,7 +1075,15 @@ class JeeLinkCoordinator:
                 except (OSError, subprocess.CalledProcessError) as exc:
                     _LOGGER.debug("stty skipped (%s)", exc)
                 _LOGGER.info("Connecting to %s...", self.serial_port)
-                ser = serial.Serial(self.serial_port, 57600, timeout=self.serial_timeout)
+                # write_timeout: a wedged USB-CDC adapter can otherwise block
+                # ser.write() forever, and with it the reader thread - which
+                # a clean shutdown/reload then waits for in vain.
+                ser = serial.Serial(
+                    self.serial_port,
+                    57600,
+                    timeout=self.serial_timeout,
+                    write_timeout=2,
+                )
                 self._dtr_reset(ser)
                 # Configured init commands (default "7m 10t" = data-rate
                 # toggle) plus "v" to request the firmware identification
@@ -999,11 +1138,29 @@ class JeeLinkCoordinator:
                             continue
 
                         if line.startswith("OK 9"):
-                            self._parse_line(line)
+                            parser = self._parse_line
                         elif line.startswith("OK EMT7110"):
-                            self._parse_emt7110_line(line)
+                            parser = self._parse_emt7110_line
                         elif line.startswith("OK LS"):
-                            self._parse_levelsender_line(line)
+                            parser = self._parse_levelsender_line
+                        else:
+                            continue
+
+                        # Decoding is isolated from the connection: the
+                        # parsers handle their own (IndexError, ValueError),
+                        # but anything else - a dict mutated from the event
+                        # loop while the reader iterates it, a bug in a
+                        # future parser - used to escape into the outer
+                        # handler below, which tears the port down, notifies
+                        # the user about a "lost connection" and reconnects
+                        # with a DTR reset. One garbled line is worth one
+                        # discarded line, not a full reconnect cycle.
+                        try:
+                            parser(line)
+                        except Exception:  # noqa: BLE001
+                            _LOGGER.exception(
+                                "Unhandled error decoding line %r", line
+                            )
                 finally:
                     ser.close()
 
@@ -1092,7 +1249,16 @@ class JeeLinkCoordinator:
         """
         try:
             parts = line.split()
-            if len(parts) < 6:
+            # EXACTLY 7 tokens ("OK", "9", id, flags, tMSB, tLSB, hum) - not
+            # "at least". pyserial's readline() returns whatever it has when
+            # its timeout expires mid-line, so a truncated packet is a
+            # routine event, and a line cut right after the temperature bytes
+            # used to be accepted as a complete temperature-only reading with
+            # no humidity byte - which also means no battery bit, i.e. a
+            # spurious battery_low=False. That flipped the battery sensor off
+            # for one packet and made the next complete packet fire the
+            # "battery low" notification all over again.
+            if len(parts) != 7:
                 return
 
             self._mark_packet_received()
@@ -1101,7 +1267,7 @@ class JeeLinkCoordinator:
             flags     = int(parts[3])
             t_msb     = int(parts[4])
             t_lsb     = int(parts[5])
-            hum_raw   = int(parts[6]) if len(parts) > 6 else None
+            hum_raw   = int(parts[6])
 
             # Temperature
             temperature = round((t_msb * 256 + t_lsb - 1000) / 10.0, 1)
@@ -1113,15 +1279,10 @@ class JeeLinkCoordinator:
 
             # Humidity byte (parts[6])
             # Bit 7 = weak battery (battery_low), bits 0-6 = humidity
-            if hum_raw is not None:
-                battery_low = bool(hum_raw & 0x80)
-                hum_masked  = hum_raw & 0x7F           # mask off the battery bit
-                # Valid: 1-100; >100 = no humidity sensor (e.g. 106 = temp-only)
-                hum = hum_masked if 1 <= hum_masked <= 100 else None
-            else:
-                battery_low = False
-                hum_masked  = None
-                hum         = None
+            battery_low = bool(hum_raw & 0x80)
+            hum_masked  = hum_raw & 0x7F               # mask off the battery bit
+            # Valid: 1-100; >100 = no humidity sensor (e.g. 106 = temp-only)
+            hum = hum_masked if 1 <= hum_masked <= 100 else None
 
             # ── Battery replacement detection (like FHEM replaceBatteryForSec) ─
             # Unknown ID with battery_new -> check if a sensor is in replace mode
@@ -1147,7 +1308,9 @@ class JeeLinkCoordinator:
                             f"{label}: battery replacement detected "
                             f"(new radio ID {sensor_id})",
                         )
-                        self._call_soon_threadsafe(self._notify_listeners)
+                        self._call_soon_threadsafe(
+                            self._notify_listeners, old_id
+                        )
                         break
 
             # Resolve the ID via the alias table (returns old_id after a swap)
@@ -1228,6 +1391,14 @@ class JeeLinkCoordinator:
                             + ")",
                         )
 
+            if resolved_id not in self._discovered:
+                # Not a sensor of ours: auto-discovery is off and this ID was
+                # never adopted (no entities exist and none will be created).
+                # Everything below only feeds entities, so tracking it would
+                # just accumulate state - outlier cache, last-seen, and above
+                # all _battery_notified - for a neighbour's sensor.
+                return
+
             # Temperature update
             temp_key = (resolved_id, temp_channel)
             temp_ok = self._check_temperature(temp_key, temperature, line)
@@ -1304,7 +1475,10 @@ class JeeLinkCoordinator:
         """
         try:
             parts = line.split()
-            if len(parts) < 13:
+            # EXACTLY 13 tokens ("OK", "EMT7110", 10 data bytes, flags) - see
+            # _parse_line: a readline() cut short by its timeout must not be
+            # decoded as if the missing tail were simply absent.
+            if len(parts) != 13:
                 return
 
             self._mark_packet_received()
@@ -1356,6 +1530,9 @@ class JeeLinkCoordinator:
                             f"({power} W, {voltage} V)",
                         )
 
+            if resolved_id not in self._discovered:
+                return  # see _parse_line: unknown and never to be created
+
             self._update((resolved_id, "voltage"), round(voltage, 1))
             self._update((resolved_id, "current"), current)
             self._update((resolved_id, "power"), power)
@@ -1384,7 +1561,12 @@ class JeeLinkCoordinator:
         """
         try:
             parts = line.split()
-            if len(parts) < 9:
+            # EXACTLY 9 tokens ("OK", "LS", id, 0, level MSB/LSB, temp
+            # MSB/LSB, voltage). A minimum check let a line truncated right
+            # before the voltage byte through with parts[8] being whatever
+            # remained of the previous field - turning a healthy sender into
+            # a bogus low-battery reading.
+            if len(parts) != 9:
                 return
 
             self._mark_packet_received()
@@ -1429,6 +1611,9 @@ class JeeLinkCoordinator:
                             f"({level} cm, {temperature} °C)",
                         )
 
+            if resolved_id not in self._discovered:
+                return  # see _parse_line: unknown and never to be created
+
             # Reuse the generic temperature outlier filter (absolute +
             # delta bounds) - same physical quantity as LaCrosse sensors.
             temp_key = (resolved_id, "temperature")
@@ -1446,7 +1631,9 @@ class JeeLinkCoordinator:
         if self._cache.get(key) != value:
             self._cache[key] = value
             self.sensor_states[key] = value
-            self._call_soon_threadsafe(self._notify_listeners)
+            # Keyed on the sensor: only that sensor's entities rewrite their
+            # state, not every entity of every sensor (see async_add_listener).
+            self._call_soon_threadsafe(self._notify_listeners, key[0])
 
     def _check_temperature(self, key: tuple, temperature: float, raw: str) -> bool:
         if not (DEFAULT_TEMP_MIN <= temperature <= DEFAULT_TEMP_MAX):

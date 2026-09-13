@@ -64,6 +64,9 @@
           "init_commands": "Space-separated commands sent to the sketch on every connect (like FHEM's initCommands). Default '7m 10t' = cycle all three data rates every 10 s. Example for a fixed rate: '0m' plus '17241r'."
         }
       }
+    },
+    "error": {
+      "already_configured": "This serial port is already used by another JeeLink entry."
     }
   },
   "entity": {

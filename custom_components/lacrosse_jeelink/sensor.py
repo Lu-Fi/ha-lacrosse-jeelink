@@ -112,8 +112,11 @@ class _LaCrosseBase(RestoreSensor):
             ):
                 self._coordinator.sensor_states[self._state_key] = last_data.native_value
                 self._coordinator._cache[self._state_key] = last_data.native_value
-        self._remove_listener = self._coordinator.async_add_listener(self._on_update)
-        self.async_write_ha_state()
+        # Keyed on this entity's sensor: only packets of THIS sensor rewrite
+        # its state (see JeeLinkCoordinator.async_add_listener).
+        self._remove_listener = self._coordinator.async_add_listener(
+            self._on_update, self._sensor_id
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener:

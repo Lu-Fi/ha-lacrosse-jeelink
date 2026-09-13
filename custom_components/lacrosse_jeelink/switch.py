@@ -44,6 +44,8 @@ class JeeLinkDebugSwitch(SwitchEntity):
         return self._coordinator.debug
 
     async def async_added_to_hass(self) -> None:
+        # Bridge-level entity: unkeyed (broadcast) registration, so it is
+        # only refreshed when debug mode itself changes.
         self._remove_listener = self._coordinator.async_add_listener(self._on_update)
 
     async def async_will_remove_from_hass(self) -> None:

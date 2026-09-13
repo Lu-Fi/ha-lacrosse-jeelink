@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN
+from .const import CONF_SERIAL_PORT, DOMAIN
 from .coordinator import JeeLinkCoordinator
 
 PLATFORMS = ["sensor", "binary_sensor", "button", "switch"]
@@ -14,6 +15,16 @@ PLATFORMS = ["sensor", "binary_sensor", "button", "switch"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = JeeLinkCoordinator(hass, entry)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    # Keep the entry's unique_id in sync with the serial port actually in
+    # use. The unique_id is what the config flow's "already configured"
+    # check compares against, but it is only set at initial setup - a port
+    # changed later through the options flow left it pointing at the old
+    # path, so a second entry could be created for the port now in use.
+    if entry.unique_id != coordinator.serial_port:
+        hass.config_entries.async_update_entry(
+            entry, unique_id=coordinator.serial_port
+        )
 
     # Register the bridge device BEFORE the platforms are set up: every
     # per-sensor device links to it through via_device_id, which is the
@@ -40,6 +51,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # sensor's entities would stay unavailable until the next restart.
     await coordinator.async_start()
 
+    # Home Assistant does NOT unload config entries on a full shutdown, so
+    # async_unload_entry() never runs there and the reader thread plus the
+    # serial device would only be released when the process dies. Release
+    # them explicitly on EVENT_HOMEASSISTANT_STOP instead.
+    async def _async_on_hass_stop(_event: Event) -> None:
+        await coordinator.async_stop()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_on_hass_stop)
+    )
+
     # Apply options changes (timeouts, notify, port, ...) immediately by
     # reloading the entry - no HA restart required.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -51,12 +73,14 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    coordinator: JeeLinkCoordinator = hass.data[DOMAIN][entry.entry_id]
+    # Unload the platforms FIRST: if that fails the entry stays loaded, and
+    # stopping the coordinator beforehand would have left a dead one in
+    # hass.data - entities still referencing it, no serial reader behind it.
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        return False
+    coordinator: JeeLinkCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
     await coordinator.async_stop()
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unloaded:
-        hass.data[DOMAIN].pop(entry.entry_id)
-    return unloaded
+    return True
 
 
 async def async_remove_config_entry_device(
