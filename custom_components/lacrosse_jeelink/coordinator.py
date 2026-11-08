@@ -38,9 +38,11 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.async_ import run_callback_threadsafe
 
 from .const import (
+    AUTO_RESET_MAX_ATTEMPTS,
     DOMAIN,
     CONF_SERIAL_PORT,
     CONF_AUTO_ADD,
+    CONF_AUTO_RESET,
     CONF_BATTERY_REPLACE_TIMEOUT,
     CONF_DATA_TIMEOUT,
     CONF_DEBUG_TIMEOUT,
@@ -66,6 +68,7 @@ from .const import (
     DEFAULT_BATTERY_REPLACE_TIMEOUT,
     DEFAULT_DEBUG_TIMEOUT,
     DEFAULT_HUM_MAX_DELTA,
+    DEFAULT_AUTO_RESET,
     DEFAULT_NOTIFY_ENTITY,
     DEFAULT_RECONNECT_DELAY,
     DEFAULT_SERIAL_TIMEOUT,
@@ -170,6 +173,8 @@ class JeeLinkCoordinator:
         }
         # Radio-silence watchdog (minutes, 0 = off)
         self.data_timeout_min: int = int(_opt(CONF_DATA_TIMEOUT, DEFAULT_DATA_TIMEOUT))
+        self.auto_reset: bool = bool(_opt(CONF_AUTO_RESET, DEFAULT_AUTO_RESET))
+        self._auto_reset_attempts = 0
         self.last_data_ts: float = 0.0
         self._data_timeout_notified = False
         self._unsub_watchdog = None
@@ -652,7 +657,12 @@ class JeeLinkCoordinator:
             # covers it; without any received data there is no baseline.
             return
         silence = time.time() - self.last_data_ts
-        if silence > self.data_timeout_min * 60 and not self._data_timeout_notified:
+        if silence <= self.data_timeout_min * 60:
+            return
+        resetting = (
+            self.auto_reset and self._auto_reset_attempts < AUTO_RESET_MAX_ATTEMPTS
+        )
+        if not self._data_timeout_notified:
             self._data_timeout_notified = True
             self._notify_listeners()  # update the "radio silence" binary sensor
             minutes = int(silence // 60)
@@ -663,10 +673,21 @@ class JeeLinkCoordinator:
             self._notify_user(
                 "data_timeout",
                 f"JeeLink: seit {minutes} Minuten keine Funkdaten mehr "
-                "empfangen (Verbindung zum Stick besteht)",
+                "empfangen (Verbindung zum Stick besteht)"
+                + (" - Stick wird zurückgesetzt" if resetting else ""),
                 f"JeeLink: no radio data received for {minutes} minutes "
-                "(serial connection is up)",
+                "(serial connection is up)"
+                + (" - resetting the stick" if resetting else ""),
             )
+        if resetting:
+            # The reconnect restarts the silence baseline, so the next
+            # attempt follows after another data_timeout.
+            self._auto_reset_attempts += 1
+            _LOGGER.warning(
+                "JeeLink: automatic stick reset %d/%d",
+                self._auto_reset_attempts, AUTO_RESET_MAX_ATTEMPTS,
+            )
+            self.request_reset()
 
     def _last_seen_epoch(self, sensor_id: int | str) -> float | None:
         """Timestamp of the last packet as epoch seconds. Depending on the
@@ -1201,6 +1222,7 @@ class JeeLinkCoordinator:
         self.last_data_ts = time.time()
         if self._data_timeout_notified:
             self._data_timeout_notified = False
+            self._auto_reset_attempts = 0
             self._call_soon_threadsafe(self._notify_listeners)
             self._notify_user(
                 "data_timeout",

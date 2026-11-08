@@ -20,6 +20,7 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_AUTO_ADD,
+    CONF_AUTO_RESET,
     CONF_BATTERY_REPLACE_TIMEOUT,
     CONF_DATA_TIMEOUT,
     CONF_DEBUG_TIMEOUT,
@@ -38,6 +39,7 @@ from .const import (
     CONF_SERIAL_PORT,
     CONF_SERIAL_TIMEOUT,
     CONF_STALE_CLEANUP_HOURS,
+    DEFAULT_AUTO_RESET,
     DEFAULT_BATTERY_REPLACE_TIMEOUT,
     DEFAULT_DATA_TIMEOUT,
     DEFAULT_DEBUG_TIMEOUT,
@@ -246,6 +248,10 @@ class JeeLinkOptionsFlow(config_entries.OptionsFlow):
                 ): NumberSelector(
                     NumberSelectorConfig(min=0, max=1440, step=1, mode=NumberSelectorMode.BOX)
                 ),
+                vol.Required(
+                    CONF_AUTO_RESET,
+                    default=self._current(CONF_AUTO_RESET, DEFAULT_AUTO_RESET),
+                ): BooleanSelector(),
                 # Automatic cleanup of stray auto-discovered sensors (hours, 0 = off)
                 vol.Required(
                     CONF_STALE_CLEANUP_HOURS,

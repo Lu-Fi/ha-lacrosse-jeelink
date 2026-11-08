@@ -23,6 +23,8 @@ CONF_NOTIFY_BATTERY_REPLACED = "notify_battery_replaced"
 # Radio-silence watchdog: warn when no radio packet has been parsed for
 # this long despite an open serial connection (minutes, 0 = off)
 CONF_DATA_TIMEOUT = "data_timeout"
+# Reset the stick automatically when the radio-silence watchdog triggers
+CONF_AUTO_RESET = "auto_reset"
 # Automatic cleanup: remove auto-discovered sensors the user never
 # touched when they have not sent data for this long (hours, 0 = off).
 # Catches stray/neighbour sensors that briefly reached the receiver.
@@ -47,6 +49,8 @@ DEFAULT_BATTERY_REPLACE_TIMEOUT = 120  # seconds to swap the battery
 DEFAULT_DEBUG_TIMEOUT = 300         # seconds until debug mode auto-disables
 DEFAULT_NOTIFY_ENTITY = ""          # empty = no notifications
 DEFAULT_DATA_TIMEOUT = 15           # minutes without any parsed packet -> warn (0 = off)
+DEFAULT_AUTO_RESET = True           # DTR-reset the stick on radio silence
+AUTO_RESET_MAX_ATTEMPTS = 3         # resets per silence episode, one per data_timeout
 DEFAULT_STALE_CLEANUP_HOURS = 0     # hours before auto-removing silent unnamed sensors (0 = off)
 DEFAULT_INIT_COMMANDS = "7m 10t"    # data-rate toggle mask 7, toggle every 10 s
 DEFAULT_DISCOVERY_MIN_PACKETS = 2   # packets within the window before a new sensor is created (1 = immediately)

@@ -2,6 +2,12 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Automatic stick reset on radio silence.** When the radio-silence watchdog triggers (all sensors silent while the serial connection is up — the typical silent RFM12B/sketch hang), the stick is now reset via DTR, the same as the *Stick reset* button. Up to 3 attempts, one per `data_timeout` period; the counter restarts when packets arrive again. The silence notification mentions the reset. New option "Reset stick automatically on radio silence" (default on).
+
 ## [1.7.0] - 2026-09-13
 
 ### Fixed

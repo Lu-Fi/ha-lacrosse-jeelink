@@ -93,6 +93,7 @@ Copy `custom_components/lacrosse_jeelink/` into your `config/custom_components/`
 | Battery replacement window (s) | `120` | How long the battery-replacement mode stays armed after pressing the button. |
 | Debug mode auto-off (s) | `300` | Verbose logging switches itself off after this time. |
 | Radio-silence warning after (min) | `15` | Warn when no radio packet has been parsed for this long even though the serial connection is up (silent firmware hang, antenna problem). A recovery message follows when data resumes. `0` disables the watchdog. |
+| Reset stick on radio silence | on | When the radio-silence warning triggers, the stick is reset (DTR) automatically — up to 3 attempts, one per warning period; the counter restarts once data flows again. Same action as the **Stick reset** button. |
 | Send notifications | on | Master switch for all notifications. |
 | Notify entity | empty | Target `notify.*` entity of the Telegram integration. Empty = no messages, regardless of the switches. |
 | Notify: connection / radio silence / new sensor / battery low / battery replaced | all on | Each notification type can be enabled/disabled individually (in addition to the master switch). |
@@ -105,7 +106,7 @@ Copy `custom_components/lacrosse_jeelink/` into your `config/custom_components/`
 | Entity | Description |
 |---|---|
 | Connected (`binary_sensor`, diagnostic) | Serial connection to the JeeLink stick is up. Carries the detected firmware banner as a `firmware` attribute; it is also shown as the bridge device's firmware version (e.g. `LaCrosseITPlusReader.10.1s (RFM69 f:868300 r:17241)`). |
-| Radio silence (`binary_sensor`, problem, diagnostic) | On while the radio-silence watchdog is triggered (no packet parsed for the configured time despite an open connection). Use it in automations, e.g. to press the stick-reset button after prolonged silence. |
+| Radio silence (`binary_sensor`, problem, diagnostic) | On while the radio-silence watchdog is triggered (no packet parsed for the configured time despite an open connection). Use it in automations; the stick is also reset automatically (see *Reset stick on radio silence*). |
 | Stick reset (`button`) | Performs a DTR hardware reset of the stick (also done automatically on known firmware hangs). |
 | Debug mode (`switch`) | Enables verbose logging of every received telegram and every filter decision; auto-off after the configured timeout. |
 
