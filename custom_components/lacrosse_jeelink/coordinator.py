@@ -673,11 +673,9 @@ class JeeLinkCoordinator:
             self._notify_user(
                 "data_timeout",
                 f"JeeLink: seit {minutes} Minuten keine Funkdaten mehr "
-                "empfangen (Verbindung zum Stick besteht)"
-                + (" - Stick wird zurückgesetzt" if resetting else ""),
+                "empfangen (Verbindung zum Stick besteht)",
                 f"JeeLink: no radio data received for {minutes} minutes "
-                "(serial connection is up)"
-                + (" - resetting the stick" if resetting else ""),
+                "(serial connection is up)",
             )
         if resetting:
             # The reconnect restarts the silence baseline, so the next
@@ -686,6 +684,13 @@ class JeeLinkCoordinator:
             _LOGGER.warning(
                 "JeeLink: automatic stick reset %d/%d",
                 self._auto_reset_attempts, AUTO_RESET_MAX_ATTEMPTS,
+            )
+            self._notify_user(
+                "data_timeout",
+                "JeeLink: Stick wird automatisch zurückgesetzt "
+                f"(Versuch {self._auto_reset_attempts}/{AUTO_RESET_MAX_ATTEMPTS})",
+                "JeeLink: resetting the stick automatically "
+                f"(attempt {self._auto_reset_attempts}/{AUTO_RESET_MAX_ATTEMPTS})",
             )
             self.request_reset()
 
