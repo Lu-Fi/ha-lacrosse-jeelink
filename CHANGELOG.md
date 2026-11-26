@@ -2,6 +2,12 @@
 
 All notable changes to this integration are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.7.1] - 2026-11-26
+
+### Fixed
+
+- Removed `pyserial==3.5` from `manifest.json`. pyserial ships with Home Assistant itself, and hassfest now rejects it as a requirement of a custom integration. The import is unchanged; core already provides it.
+
 ## [1.7.0] - 2026-09-13
 
 ### Fixed
