@@ -19,7 +19,7 @@ Home Assistant custom integration for **LaCrosse / TX35 / IT+ temperature and hu
 - **Discovery threshold** (like FHEM's `autoCreateThreshold`): new sensors are only created after N packets within T seconds (default 2/120 s) — one-shot decode flukes and fringe receptions never clutter the registry
 - **Battery replacement mode** (like FHEM's `replaceBatteryForSec`): press the per-sensor button, swap the battery within the configured window, and the sensor's new random radio ID is mapped onto the existing device — entities and history are preserved
 - Values are **restored after a restart** (RestoreSensor) until fresh packets arrive
-- Robust serial handling: DTR hardware reset, automatic recovery from known firmware hangs (`drecvintr exit`, `RFM12 hang`), automatic reconnect with configurable delay
+- Robust serial handling: DTR hardware reset, automatic recovery from known firmware hangs (`drecvintr exit`, `RFM12 hang`), automatic stick reset on radio silence, automatic reconnect with configurable delay
 - **Optional notifications** via a Telegram `notify` entity: connection lost/restored, new sensor discovered, battery low, battery replacement detected
 - Debug switch with automatic timeout for troubleshooting reception issues
 - Config UI in German and English; ships its own brand icon
@@ -148,7 +148,7 @@ Decoded from `OK LS …` telegrams (a DIY/community tank/cistern fill-level send
 
 ## Notifications
 
-If a notify entity is configured (and the master switch is on), the integration sends messages for: **connection lost / restored** (serial errors), **radio silence / data resumed** (no packets parsed for the configured time despite an open serial connection), **new sensor discovered** (with first readings), **battery low** (once per low-phase per sensor), and **battery replacement detected** (old ID → new radio ID). Every type can be switched on/off individually in the options. Message language follows the Home Assistant system language (German/English).
+If a notify entity is configured (and the master switch is on), the integration sends messages for: **connection lost / restored** (serial errors), **radio silence / data resumed** (no packets parsed for the configured time despite an open serial connection; every automatic stick reset attempt is announced as well), **new sensor discovered** (with first readings), **battery low** (once per low-phase per sensor), and **battery replacement detected** (old ID → new radio ID). Every type can be switched on/off individually in the options. Message language follows the Home Assistant system language (German/English).
 
 ## Protocol notes
 
